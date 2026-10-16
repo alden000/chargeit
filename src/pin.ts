@@ -11,14 +11,20 @@ export function opBadge(op: Operator, size: "s" | "m" = "s"): string {
 }
 
 /** Ring-style availability marker shared by the map, list and detail views. */
-export function pinHtml(sum: Pick<Summary, "free" | "busy" | "offline" | "state" | "hasDC">, label?: string): string {
+export function pinHtml(
+  sum: Pick<Summary, "free" | "busy" | "offline" | "state" | "hasDC">,
+  label?: string,
+  provider?: { op: Operator; others: number },
+): string {
   const total = sum.free + sum.busy + sum.offline || 1;
   const p = sum.free / total;
   const q = sum.busy / total;
   const text = label ?? (sum.state === "offline" ? "–" : String(sum.free));
   return `<span class="pin pin--${sum.state}" style="--p:${p.toFixed(3)};--q:${q.toFixed(3)}" aria-hidden="true">
     <span class="pin__ring"></span><span class="pin__core"></span>
-    <span class="pin__label">${text}</span>${sum.hasDC ? `<span class="pin__bolt">${BOLT}</span>` : ""}
+    <span class="pin__label">${text}</span>${sum.hasDC ? `<span class="pin__bolt">${BOLT}</span>` : ""}${
+      provider ? `<span class="pin__op${provider.others ? " has-more" : ""}">${opBadge(provider.op)}</span>` : ""
+    }
   </span>`;
 }
 

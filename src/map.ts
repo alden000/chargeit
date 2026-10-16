@@ -4,7 +4,7 @@ import { Map as MLMap, Marker, setWorkerUrl, type GeoJSONSource, type StyleSpeci
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 
 setWorkerUrl(workerUrl);
-import type { Availability, StationVM } from "./model.ts";
+import type { Availability, Operator, StationVM } from "./model.ts";
 import { reducedMotion } from "./motion.ts";
 import { pinHtml } from "./pin.ts";
 
@@ -259,7 +259,11 @@ export class ChargeMap {
     };
   }
 
-  setStations(stations: StationVM[]): void {
+  private providerOf: (s: StationVM) => { op: Operator; others: number } = () => ({ op: { key: "", name: "", short: "?", color: "", slug: null, logo: null }, others: 0 });
+
+  /** `providerOf` picks the provider badge shown on each station pin. */
+  setStations(stations: StationVM[], providerOf?: (s: StationVM) => { op: Operator; others: number }): void {
+    if (providerOf) this.providerOf = providerOf;
     this.stations = stations;
     this.byId = new Map(stations.map((s) => [s.id, s]));
     const src = this.map.getSource(SOURCE) as GeoJSONSource | undefined;
@@ -294,7 +298,8 @@ export class ChargeMap {
       const free = Number(p.free) || 0;
       const busy = Number(p.busy) || 0;
       const offline = Number(p.offline) || 0;
-      const sig = `${free}/${busy}/${offline}`;
+      const st = isCluster ? undefined : this.byId.get(String(p.id));
+      const sig = `${free}/${busy}/${offline}${st ? `/${this.providerOf(st).op.name}` : ""}`;
       let entry = this.markers.get(key);
       if (!entry) {
         const el = document.createElement("div");
@@ -368,9 +373,11 @@ export class ChargeMap {
       el.setAttribute("aria-label", `${d.count} charging sites, ${d.free} chargers free. Tap to zoom in.`);
     } else {
       const st = this.byId.get(d.id);
-      el.innerHTML = pinHtml(sum);
+      const provider = st ? this.providerOf(st) : undefined;
+      el.innerHTML = pinHtml(sum, undefined, provider);
       el.setAttribute("role", "button");
-      el.setAttribute("aria-label", `${st?.name ?? "Charging site"}: ${d.free} of ${usable} free`);
+      const by = provider?.op.name ? `, ${provider.op.name}${provider.others ? ` and ${provider.others} more` : ""}` : "";
+      el.setAttribute("aria-label", `${st?.name ?? "Charging site"}${by}: ${d.free} of ${usable} free`);
       if (d.id === this.selectedId) el.firstElementChild?.classList.add("is-selected");
     }
     el.tabIndex = 0;

@@ -409,3 +409,18 @@ export function bestPrice(st: Station, discounts: Discounts): EffectivePrice | n
 export function money(n: number): string {
   return `$${n.toFixed(2)}`;
 }
+
+/**
+ * The provider to represent a station on the map: one the user filtered for if
+ * present, otherwise whoever runs the most connectors there.
+ */
+export function primaryOperator(st: Station, prefer: readonly string[] = []): { op: Operator; others: number } {
+  const counts = new Map<string, number>();
+  for (const pt of st.points) {
+    const n = pt.plugs.reduce((k, pl) => k + Math.max(1, pl.connectors.length), 0);
+    counts.set(pt.operator, (counts.get(pt.operator) ?? 0) + n);
+  }
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([raw]) => operatorInfo(raw));
+  const op = ranked.find((o) => prefer.includes(o.name)) ?? ranked[0] ?? operatorInfo("");
+  return { op, others: Math.max(0, ranked.length - 1) };
+}

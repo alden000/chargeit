@@ -813,6 +813,35 @@ svg {
   height: 9px;
   fill: currentColor;
 }
+/* Provider badge, bottom-right of the ring. */
+.pin__op {
+  position: absolute;
+  isolation: isolate;
+  right: -6px;
+  bottom: -5px;
+  display: grid;
+  border-radius: 7px;
+  box-shadow: 0 0 0 2px var(--ink-900), 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.pin__op .op-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+}
+/* Several providers here: a stacked "card" edge hints there's more inside. */
+.pin__op.has-more::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 7px;
+  background: var(--muted);
+  transform: translate(3px, 3px);
+  box-shadow: 0 0 0 2px var(--ink-900);
+}
+.pin--offline .pin__op {
+  filter: grayscale(1);
+}
 .pin.is-selected {
   transform: scale(1.35);
   z-index: 5;

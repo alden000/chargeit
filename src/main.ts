@@ -21,6 +21,7 @@ import {
   timeAgo,
   toViewModels,
   bestPrice,
+  primaryOperator,
   clampPct,
   money,
   plugPrice,
@@ -289,7 +290,8 @@ function updateLive(): void {
 
 function refilter(): void {
   state.filtered = state.all.filter((s) => matchesFilters(s, state.filters, state.favs));
-  cmap.setStations(state.filtered);
+  const prefer = state.filters.operators;
+  cmap.setStations(state.filtered, (s) => primaryOperator(s, prefer));
   renderFilters();
   renderList();
 }

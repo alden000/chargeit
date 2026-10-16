@@ -284,3 +284,21 @@ test("station detail names the provider's app and links the right store", async 
   else expect(href).toBe("https://apps.apple.com/sg/app/sp-utilities-ev-charging/id596749130");
   await expect(link).toHaveAttribute("rel", "noopener");
 });
+
+test("map pins show the provider; filtering a provider puts its logo on the pins", async ({ page, api: _ }) => {
+  await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+  await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+  await page.getByRole("button", { name: "Close" }).click();
+  // Zoomed in on a station: individual pins carry a provider badge and name it for screen readers.
+  await expect(page.locator(".pin-host .pin__op").first()).toBeVisible();
+  await expect(page.locator('.pin-host[aria-label*="Clarke Quay, SP Mobility"]')).toHaveCount(1);
+  await expect(page.locator('.pin-host[aria-label*="Clarke Quay"] .pin__op img')).toHaveAttribute("src", /providers\/sp\.png$/);
+
+  await page.locator('[data-f="ops"]').click();
+  await page.getByLabel(/^Shell Recharge/).check();
+  await page.keyboard.press("Escape");
+  await expect.poll(async () => {
+    const srcs = await page.locator(".pin-host .pin__op img").evaluateAll((els) => els.map((e) => e.getAttribute("src")));
+    return srcs.length > 0 && srcs.every((s) => s?.endsWith("providers/shell.png"));
+  }).toBe(true);
+});
