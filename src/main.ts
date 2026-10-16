@@ -34,6 +34,7 @@ import { countTo, escapeHtml, haptic, reducedMotion, withViewTransition } from "
 import { boltsHtml, opBadge, pinHtml } from "./pin.ts";
 import { BottomSheet } from "./sheet.ts";
 import { registerPwa } from "./pwa.ts";
+import { PROVIDER_APPS, detectPlatform, storeLinks } from "./provider-apps.ts";
 import type { ChargersPayload } from "../shared/schema.ts";
 
 const POLL_MS = 60_000;
@@ -448,6 +449,26 @@ function closeDetail(): void {
   });
 }
 
+const platform = detectPlatform();
+
+/** Provider rows for the detail view: logo, name, and the app you charge with (when known). */
+function providersHtml(ops: ReturnType<typeof operatorInfo>[]): string {
+  if (!ops.length) return "";
+  return `<ul class="providers">${ops
+    .map((o) => {
+      const app = o.slug ? PROVIDER_APPS[o.slug] : undefined;
+      const links = app ? storeLinks(app, platform) : [];
+      return `<li class="provider${app ? " has-app" : ""}">
+        ${opBadge(o, "m")}
+        <span class="provider__text"><b>${escapeHtml(o.name)}</b>${
+          app ? `<small>Charge with <strong>${escapeHtml(app.name)}</strong>${app.note ? ` · ${escapeHtml(app.note)}` : ""}</small>` : ""
+        }</span>
+        ${links.map((l) => `<a class="provider__get" href="${escapeHtml(l.url)}" target="_blank" rel="noopener" aria-label="Get ${escapeHtml(app!.name)} on ${l.label}">${links.length > 1 ? escapeHtml(l.label) : "Get app"}</a>`).join("")}
+      </li>`;
+    })
+    .join("")}</ul>`;
+}
+
 function priceTile(bp: EffectivePrice | null, attrs: string): string {
   if (!bp) return `<div class="tile" ${attrs}><b class="num">–</b><span>Price</span></div>`;
   if (bp.price === 0) return `<div class="tile" ${attrs}><b class="num avail--free">Free</b><span>Price</span></div>`;
@@ -515,7 +536,7 @@ function renderDetail(id: string, animate: boolean): void {
     </div>
     <div class="nav-menu" hidden></div>
     <h3 class="section-h">Chargers</h3>
-    ${ops.length ? `<div class="providers">${ops.map((o) => `<span class="provider">${opBadge(o, "m")}<span>${escapeHtml(o.name)}</span></span>`).join("")}</div>` : ""}
+    ${providersHtml(ops)}
     ${groups
       .map((g, gi) => {
         const op = operatorInfo(g.operator);

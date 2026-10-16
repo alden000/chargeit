@@ -1180,6 +1180,8 @@ svg {
   flex-wrap: wrap;
   gap: 8px;
   margin: -2px 0 12px;
+  padding: 0;
+  list-style: none;
 }
 .provider {
   display: inline-flex;
@@ -1189,7 +1191,49 @@ svg {
   border-radius: 999px;
   background: var(--ink-800);
   font-size: 13.5px;
+}
+.provider__text b {
   font-weight: 600;
+}
+/* With an app: a full-width row so the app name and store button fit. */
+.provider.has-app {
+  display: flex;
+  width: 100%;
+  gap: 10px;
+  padding: 8px 8px 8px 8px;
+  border-radius: 16px;
+}
+.provider.has-app .provider__text {
+  flex: 1;
+  min-width: 0;
+}
+.provider__text small {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.provider__text strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.provider__get {
+  flex: none;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: var(--ink-700);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.provider__get:active {
+  transform: scale(0.96);
 }
 .chip-menu label .op-badge {
   margin-right: -2px;

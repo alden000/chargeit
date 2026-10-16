@@ -32,6 +32,8 @@ export interface Operator {
   name: string;
   short: string;
   color: string;
+  /** Stable id for this provider (matches public/providers/ and provider-apps.ts). */
+  slug: string | null;
   /** Slug of a bundled logo in public/providers/<slug>.png, when we have a vetted one. */
   logo: string | null;
 }
@@ -88,7 +90,7 @@ export function operatorInfo(raw: string): Operator {
   let op: Operator;
   const known = OPERATORS.find(([re]) => re.test(key));
   if (known) {
-    op = { key, name: known[1], short: known[2], color: known[3], logo: PROVIDER_LOGOS.has(known[4]) ? known[4] : null };
+    op = { key, name: known[1], short: known[2], color: known[3], slug: known[4], logo: PROVIDER_LOGOS.has(known[4]) ? known[4] : null };
   } else {
     const clean = titleCase(
       key
@@ -106,7 +108,7 @@ export function operatorInfo(raw: string): Operator {
       .toUpperCase();
     let h = 0;
     for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    op = { key, name, short: short || "?", color: `hsl(${h % 360} 45% 42%)`, logo: null };
+    op = { key, name, short: short || "?", color: `hsl(${h % 360} 45% 42%)`, slug: null, logo: null };
   }
   opCache.set(key, op);
   return op;
