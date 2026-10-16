@@ -26,7 +26,7 @@ import {
   type StationVM,
 } from "./model.ts";
 import { countTo, escapeHtml, haptic, reducedMotion, withViewTransition } from "./motion.ts";
-import { boltsHtml, pinHtml } from "./pin.ts";
+import { boltsHtml, opBadge, pinHtml } from "./pin.ts";
 import { BottomSheet } from "./sheet.ts";
 import { registerPwa } from "./pwa.ts";
 import type { ChargersPayload } from "../shared/schema.ts";
@@ -365,7 +365,7 @@ function renderList(force = false): void {
           <span class="card__meta">
             <span class="avail avail--${s.sum.state}">${availabilityText(s.sum)}</span>
             <span>${formatKw(s.sum.maxKw)}${s.sum.hasDC ? " DC" : ""}</span>
-            <span class="op"><i style="--c:${op.color}">${escapeHtml(op.short)}</i>${escapeHtml(op.name)}${more}</span>
+            <span class="op">${opBadge(op)}${escapeHtml(op.name)}${more}</span>
             ${price}
           </span>
         </span>
@@ -487,7 +487,8 @@ function renderDetail(id: string, animate: boolean): void {
       <button type="button" class="btn" data-act="share" aria-label="Share">${SHARE}</button>
     </div>
     <div class="nav-menu" hidden></div>
-    <h3 class="section-h">Chargers${ops.length ? ` · ${ops.map((o) => escapeHtml(o.name)).join(", ")}` : ""}</h3>
+    <h3 class="section-h">Chargers</h3>
+    ${ops.length ? `<div class="providers">${ops.map((o) => `<span class="provider">${opBadge(o, "m")}<span>${escapeHtml(o.name)}</span></span>`).join("")}</div>` : ""}
     ${groups
       .map((g, gi) => {
         const pr = formatPrice(g.plug);
@@ -498,7 +499,7 @@ function renderDetail(id: string, animate: boolean): void {
             <span class="group__plug" aria-hidden="true">${g.current === "DC" ? PLUG_DC : PLUG_AC}</span>
             <span class="group__title">
               <b>${escapeHtml(g.label)} · ${formatKw(g.kw)}</b>
-              <small>${escapeHtml(g.current || "—")} · ${boltsHtml(Math.min(3, Math.max(0, g.kw === null ? 0 : g.kw < 11 ? 1 : g.kw < 50 ? 2 : 3)))} · ${gFree}/${g.connectors.filter((c) => c.s !== null).length} free${ops.length > 1 ? ` · ${escapeHtml(op.name)}` : ""}</small>
+              <small>${escapeHtml(g.current || "—")} · ${boltsHtml(Math.min(3, Math.max(0, g.kw === null ? 0 : g.kw < 11 ? 1 : g.kw < 50 ? 2 : 3)))} · ${gFree}/${g.connectors.filter((c) => c.s !== null).length} free${ops.length > 1 ? ` · <span class="op">${opBadge(op)}${escapeHtml(op.name)}</span>` : ""}</small>
             </span>
             <span class="group__price ${pr.kind === "free" ? "is-free" : pr.kind === "na" ? "is-na" : ""}">${escapeHtml(pr.text)}${pr.unit ? `<small>${escapeHtml(pr.unit)}</small>` : ""}</span>
           </div>
@@ -674,7 +675,10 @@ filtersEl.addEventListener("click", (e) => {
     case "ops": {
       const counts = new Map<string, number>();
       for (const s of state.all) for (const o of s.sum.operators) counts.set(operatorInfo(o).name, (counts.get(operatorInfo(o).name) ?? 0) + 1);
-      const items = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name, n]) => ({ label: name, count: n, checked: f.operators.includes(name), value: name }));
+      const byName = new Map(state.all.flatMap((s) => s.sum.operators.map((o) => [operatorInfo(o).name, operatorInfo(o)] as const)));
+      const items = [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, n]) => ({ label: name, count: n, checked: f.operators.includes(name), value: name, icon: byName.get(name) ? opBadge(byName.get(name)!) : "" }));
       openMenu(chip, items, "checkbox", (vals) => setFilters({ ...state.filters, operators: vals }), false);
       break;
     }
@@ -690,7 +694,7 @@ function closeMenus(): void {
 }
 function openMenu(
   anchorEl: HTMLElement,
-  items: Array<{ label: string; value: string; checked: boolean; count?: number }>,
+  items: Array<{ label: string; value: string; checked: boolean; count?: number; icon?: string }>,
   kind: "radio" | "checkbox",
   onApply: (vals: string[]) => void,
   closeOnPick = true,
@@ -707,7 +711,7 @@ function openMenu(
   m.innerHTML = items
     .map(
       (it) =>
-        `<label><input type="${kind}" name="m" value="${escapeHtml(it.value)}" ${it.checked ? "checked" : ""}/><span>${escapeHtml(it.label)}</span>${it.count !== undefined ? `<span class="count">${it.count}</span>` : ""}</label>`,
+        `<label><input type="${kind}" name="m" value="${escapeHtml(it.value)}" ${it.checked ? "checked" : ""}/>${it.icon ?? ""}<span>${escapeHtml(it.label)}</span>${it.count !== undefined ? `<span class="count">${it.count}</span>` : ""}</label>`,
     )
     .join("");
   document.body.append(m);
@@ -785,7 +789,7 @@ function renderResults(stations: StationVM[], places: Place[] | null, q: string)
     items.push(`<li class="search__group" role="presentation">Chargers</li>`);
     stations.forEach((s) =>
       items.push(
-        `<li class="search__item" role="option" data-id="${escapeHtml(s.id)}"><span class="ico" style="color:var(--volt)">${BOLT}</span><div><b>${escapeHtml(s.name)}</b><small><span class="avail--${s.sum.state}">${availabilityText(s.sum)}</span> · ${formatKw(s.sum.maxKw)} · ${escapeHtml(operatorInfo(s.sum.operators[0] ?? "").name)}</small></div></li>`,
+        `<li class="search__item" role="option" data-id="${escapeHtml(s.id)}"><span class="ico" style="color:var(--volt)">${BOLT}</span><div><b>${escapeHtml(s.name)}</b><small><span class="avail--${s.sum.state}">${availabilityText(s.sum)}</span> · ${formatKw(s.sum.maxKw)} · <span class="op">${opBadge(operatorInfo(s.sum.operators[0] ?? ""))}${escapeHtml(operatorInfo(s.sum.operators[0] ?? "").name)}</span></small></div></li>`,
       ),
     );
   }

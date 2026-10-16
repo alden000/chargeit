@@ -1141,18 +1141,58 @@ svg {
   align-items: center;
   gap: 5px;
 }
-.op i {
+.op-badge {
+  flex: none;
   width: 18px;
   height: 18px;
   border-radius: 6px;
-  display: grid;
+  display: inline-grid;
   place-items: center;
   font-style: normal;
   font-size: 9px;
   font-weight: 800;
+  line-height: 1;
   color: #fff;
   background: var(--c, var(--offline));
   letter-spacing: -0.02em;
+  overflow: hidden;
+  vertical-align: middle;
+}
+.op-badge--m {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  font-size: 11px;
+}
+/* Logos sit on a white tile (most marks are designed for white) so they read in both themes. */
+.op-badge--logo {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(12, 19, 36, 0.08);
+}
+.op-badge--logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -2px 0 12px;
+}
+.provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border-radius: 999px;
+  background: var(--ink-800);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.chip-menu label .op-badge {
+  margin-right: -2px;
 }
 @keyframes card-in {
   from {

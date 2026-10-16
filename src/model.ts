@@ -1,4 +1,5 @@
 import type { ChargersPayload, Plug, Station } from "../shared/schema.ts";
+import { PROVIDER_LOGOS } from "./providers.generated.ts";
 
 export type Availability = "free" | "few" | "busy" | "offline";
 export type SpeedTier = 0 | 1 | 2 | 3;
@@ -31,29 +32,47 @@ export interface Operator {
   name: string;
   short: string;
   color: string;
+  /** Slug of a bundled logo in public/providers/<slug>.png, when we have a vetted one. */
+  logo: string | null;
 }
 
 // Registered company names → the names drivers actually recognise.
-const OPERATORS: Array<[RegExp, string, string, string]> = [
-  [/^sp\b|sp mobility/i, "SP Mobility", "SP", "#0B6FD6"],
-  [/charge\s*\+|chargeplus/i, "Charge+", "C+", "#00A86B"],
-  [/comfortdelgro|cdg/i, "CDG ENGIE", "CD", "#1C5FB8"],
-  [/shell/i, "Shell Recharge", "SH", "#D9A400"],
-  [/strides/i, "Strides YTL", "ST", "#E0592A"],
-  [/^volt\b|volt singapore/i, "Volt", "VO", "#7A4DFF"],
-  [/tesla/i, "Tesla", "TE", "#CC0000"],
-  [/mnl/i, "MNL Solutions", "MN", "#4F7CAC"],
-  [/great\s*charge/i, "Great Charge", "GC", "#2E9E8F"],
-  [/fastparkncharge|fast\s*park/i, "FastParkNCharge", "FP", "#E3365B"],
-  [/ev\s*mobility/i, "EV Mobility", "EM", "#3A8F3A"],
-  [/\bked\b/i, "KED Energy", "KE", "#8C5A2B"],
-  [/novowatt/i, "Novowatt", "NW", "#5B48C9"],
-  [/eigen/i, "Eigen Energy", "EE", "#127C9E"],
-  [/bluesg|blue\s*sg/i, "BlueSG", "BS", "#0072CE"],
-  [/sunseap|edp/i, "EDP Renewables", "ED", "#E1251B"],
-  [/keppel/i, "Keppel", "KP", "#C8102E"],
-  [/\btotal\s*energies\b/i, "TotalEnergies", "TT", "#ED0000"],
-  [/\bbp\b/i, "bp pulse", "BP", "#009B3A"],
+// [matcher, display name, monogram, monogram colour, logo slug]
+const OPERATORS: Array<[RegExp, string, string, string, string]> = [
+  [/^sp\b|sp mobility/i, "SP Mobility", "SP", "#0B6FD6", "sp"],
+  [/charge\s*\+|chargeplus/i, "Charge+", "C+", "#00A86B", "chargeplus"],
+  [/comfortdelgro|cdg/i, "CDG ENGIE", "CD", "#1C5FB8", "cdg-engie"],
+  [/shell/i, "Shell Recharge", "SH", "#D9A400", "shell"],
+  [/strides/i, "Strides YTL", "ST", "#E0592A", "strides"],
+  [/^volt\b|volt singapore/i, "Volt", "VO", "#7A4DFF", "volt"],
+  [/tesla/i, "Tesla", "TE", "#CC0000", "tesla"],
+  [/mnl/i, "MNL Solutions", "MN", "#4F7CAC", "mnl"],
+  [/great\s*charge/i, "Great Charge", "GC", "#2E9E8F", "greatcharge"],
+  [/fastparkncharge|fast\s*park/i, "FastParkNCharge", "FP", "#E3365B", "fastparkncharge"],
+  [/ev\s*mobility/i, "EV Mobility", "EM", "#3A8F3A", "evmobility"],
+  [/\bked\b/i, "KED Energy", "KE", "#8C5A2B", "ked"],
+  [/novowatt/i, "Novowatt", "NW", "#5B48C9", "novowatt"],
+  [/eigen/i, "Eigen Energy", "EE", "#127C9E", "eigen"],
+  [/st\s*engineering/i, "ST Engineering", "ST", "#D2232A", "stengineering"],
+  [/solateks/i, "Solateks", "SO", "#2F7D4A", "solateks"],
+  [/city\s*energy/i, "City Energy GO", "CE", "#E87722", "cityenergy"],
+  [/evone/i, "EVOne", "E1", "#0E7C86", "evone"],
+  [/\bup\s*solutions/i, "UP Solutions", "UP", "#3355AA", "upsolutions"],
+  [/airetec/i, "Airetec", "AT", "#1F6FB2", "airetec"],
+  [/buswa?ys/i, "Busways", "BW", "#C8102E", "busways"],
+  [/wes\s*cares/i, "WES Cares Energy", "WE", "#2B8A3E", "wescares"],
+  [/union\s*gas/i, "Union Gas", "UG", "#D52B1E", "uniongas"],
+  [/\bg\.?\s*tech\b/i, "G. Tech", "GT", "#4A5568", "gtech"],
+  [/eneready/i, "EneReady", "ER", "#0091D5", "eneready"],
+  [/^electric\b/i, "Electric", "EL", "#5B48C9", "electric"],
+  [/iwow/i, "IWOW", "IW", "#00A0E9", "iwow"],
+  [/p-?parking/i, "P-Parking", "PP", "#E30613", "pparking"],
+  [/alpina/i, "Alpina Energy", "AL", "#1E7FCB", "alpina"],
+  [/bluesg|blue\s*sg/i, "BlueSG", "BS", "#0072CE", "bluesg"],
+  [/sunseap|edp/i, "EDP Renewables", "ED", "#E1251B", "edp"],
+  [/keppel/i, "Keppel", "KP", "#C8102E", "keppel"],
+  [/\btotal\s*energies\b/i, "TotalEnergies", "TT", "#ED0000", "totalenergies"],
+  [/\bbp\b/i, "bp pulse", "BP", "#009B3A", "bp"],
 ];
 
 const opCache = new Map<string, Operator>();
@@ -69,7 +88,7 @@ export function operatorInfo(raw: string): Operator {
   let op: Operator;
   const known = OPERATORS.find(([re]) => re.test(key));
   if (known) {
-    op = { key, name: known[1], short: known[2], color: known[3] };
+    op = { key, name: known[1], short: known[2], color: known[3], logo: PROVIDER_LOGOS.has(known[4]) ? known[4] : null };
   } else {
     const clean = titleCase(
       key
@@ -87,7 +106,7 @@ export function operatorInfo(raw: string): Operator {
       .toUpperCase();
     let h = 0;
     for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    op = { key, name, short: short || "?", color: `hsl(${h % 360} 45% 42%)` };
+    op = { key, name, short: short || "?", color: `hsl(${h % 360} 45% 42%)`, logo: null };
   }
   opCache.set(key, op);
   return op;
