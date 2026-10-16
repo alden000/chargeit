@@ -272,3 +272,15 @@ test.describe("corporate / fleet discounts", () => {
     await expect(page.locator("#settings-dot")).toBeHidden();
   });
 });
+
+test("station detail names the provider's app and links the right store", async ({ page, api: _ }, info) => {
+  await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+  const row = page.locator("#view-detail .provider.has-app", { hasText: "SP Mobility" });
+  await expect(row).toContainText("Charge with SP: Utilities & EV Charging");
+  const link = row.getByRole("link", { name: /Get SP: Utilities & EV Charging on/ });
+  await expect(link).toHaveCount(1);
+  const href = await link.getAttribute("href");
+  if (info.project.name === "android") expect(href).toBe("https://play.google.com/store/apps/details?id=sg.com.singaporepower.spservices");
+  else expect(href).toBe("https://apps.apple.com/sg/app/sp-utilities-ev-charging/id596749130");
+  await expect(link).toHaveAttribute("rel", "noopener");
+});

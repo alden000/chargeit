@@ -15,6 +15,7 @@ price, on a map built for one-handed use.
 | 🟢 **Live availability** | A ring around each pin shows free (Volt) versus in use (Ember). It refreshes every 60 s from LTA's feed, which LTA updates about every 5 minutes. |
 | ⚡ **Speed** | The kW rating is shown with ⚡/⚡⚡/⚡⚡⚡ tiers, plus AC/DC and the plug type (Type 2, CCS2, CHAdeMO). |
 | 🏷️ **Provider & price** | Each provider's own logo and friendly name (SP Mobility, Charge+, CDG ENGIE, Shell Recharge…), and the price per kWh when LTA publishes one. |
+| 📱 **Which app** | Each provider shows the app you charge with (e.g. SP, CDG ENERGY, ChargEco, Shell Recharge Asia) and a Get app button for your phone's store. |
 | 💳 **Your discounts** | In Settings, add a corporate or fleet discount (% off) for any provider; every price then shows what *you* pay. Stored on your device only. |
 | 🔎 **Find** | Search by charger name, postal code or any place (OneMap). Filter by *Free now*, *DC fast*, minimum kW, provider or *Saved*. |
 | 🧭 **Go** | One-tap directions in Google Maps, Apple Maps or Waze, and shareable deep links (`#s=<station>`). |

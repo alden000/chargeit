@@ -461,9 +461,13 @@ function providersHtml(ops: ReturnType<typeof operatorInfo>[]): string {
       return `<li class="provider${app ? " has-app" : ""}">
         ${opBadge(o, "m")}
         <span class="provider__text"><b>${escapeHtml(o.name)}</b>${
-          app ? `<small>Charge with <strong>${escapeHtml(app.name)}</strong>${app.note ? ` · ${escapeHtml(app.note)}` : ""}</small>` : ""
+          !app
+            ? ""
+            : app.name
+              ? `<small>Charge with <strong>${escapeHtml(app.name)}</strong>${app.note ? ` · ${escapeHtml(app.note)}` : ""}</small>`
+              : `<small>${escapeHtml(app.note ?? "")}</small>`
         }</span>
-        ${links.map((l) => `<a class="provider__get" href="${escapeHtml(l.url)}" target="_blank" rel="noopener" aria-label="Get ${escapeHtml(app!.name)} on ${l.label}">${links.length > 1 ? escapeHtml(l.label) : "Get app"}</a>`).join("")}
+        ${links.map((l) => `<a class="provider__get" href="${escapeHtml(l.url)}" target="_blank" rel="noopener" aria-label="Get ${escapeHtml(app?.name ?? "the app")} on ${l.label}">${links.length > 1 ? escapeHtml(l.label) : "Get app"}</a>`).join("")}
       </li>`;
     })
     .join("")}</ul>`;

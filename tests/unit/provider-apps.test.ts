@@ -4,8 +4,9 @@ import { PROVIDER_APPS, detectPlatform, safeStoreUrl, storeLinks } from "../../s
 describe("provider apps", () => {
   it("every bundled entry points only at official app stores", () => {
     for (const [slug, app] of Object.entries(PROVIDER_APPS)) {
-      expect(app.name, slug).toBeTruthy();
-      expect(app.ios || app.android, slug).toBeTruthy();
+      // Either a named app with at least one store link, or a payment note on its own.
+      if (app.name) expect(app.ios || app.android, slug).toBeTruthy();
+      else expect(app.note, slug).toBeTruthy();
       if (app.ios) expect(app.ios, slug).toMatch(/^https:\/\/apps\.apple\.com\/[a-z]{2}\/app\/[^/]+\/id\d+$/);
       if (app.android) expect(app.android, slug).toMatch(/^https:\/\/play\.google\.com\/store\/apps\/details\?id=[\w.]+$/);
     }
