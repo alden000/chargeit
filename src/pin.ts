@@ -5,9 +5,9 @@ import { escapeHtml } from "./motion.ts";
 /** Provider badge: the provider's own logo when bundled, otherwise a coloured monogram. */
 export function opBadge(op: Operator, size: "s" | "m" = "s"): string {
   if (op.logo) {
-    return `<i class="op-badge op-badge--${size} op-badge--logo"><img src="${import.meta.env.BASE_URL}providers/${op.logo}.png" alt="" width="64" height="64" loading="lazy" decoding="async"/></i>`;
+    return `<i class="op-badge op-badge--${size} op-badge--logo" aria-hidden="true"><img src="${import.meta.env.BASE_URL}providers/${op.logo}.png" alt="" width="64" height="64" loading="lazy" decoding="async"/></i>`;
   }
-  return `<i class="op-badge op-badge--${size}" style="--c:${op.color}">${escapeHtml(op.short)}</i>`;
+  return `<i class="op-badge op-badge--${size}" style="--c:${op.color}" aria-hidden="true">${escapeHtml(op.short)}</i>`;
 }
 
 /** Ring-style availability marker shared by the map, list and detail views. */

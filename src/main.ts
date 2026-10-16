@@ -13,7 +13,6 @@ import {
   distanceM,
   formatDistance,
   formatKw,
-  formatPrice,
   groupPlugs,
   matchesFilters,
   operatorInfo,
@@ -21,6 +20,12 @@ import {
   tierLabel,
   timeAgo,
   toViewModels,
+  bestPrice,
+  clampPct,
+  money,
+  plugPrice,
+  sanitizeDiscounts,
+  type EffectivePrice,
   type Filters,
   type LngLat,
   type StationVM,
@@ -77,6 +82,7 @@ const state = {
   byId: new Map<string, StationVM>(),
   filtered: [] as StationVM[],
   filters: loadFilters(),
+  discounts: sanitizeDiscounts(store.get<unknown>("discounts", {})) as Record<string, number>,
   favs: new Set<string>((store.get<unknown[]>("favs", []) ?? []).filter((x): x is string => typeof x === "string")),
   user: null as LngLat | null,
   selected: null as string | null,
@@ -328,7 +334,7 @@ function renderList(force = false): void {
       ? "Nothing on screen — showing the closest"
       : "No matches";
 
-  const sig = `${sorted.map((x) => `${x.s.id}:${x.s.sum.free}:${x.s.sum.busy}`).join(",")}|${state.favs.size}`;
+  const sig = `${sorted.map((x) => `${x.s.id}:${x.s.sum.free}:${x.s.sum.busy}`).join(",")}|${state.favs.size}|${JSON.stringify(state.discounts)}`;
   if (sig === listSig && !force) {
     // Same stations, same order: just refresh distances in place.
     sorted.forEach(({ s, d }) => {
@@ -356,7 +362,14 @@ function renderList(force = false): void {
       const ops = s.sum.operators.map(operatorInfo);
       const op = ops.find((o) => state.filters.operators.includes(o.name)) ?? ops[0] ?? operatorInfo("");
       const more = s.sum.operators.length > 1 ? ` +${s.sum.operators.length - 1}` : "";
-      const price = s.sum.minPrice === null ? "" : s.sum.minPrice === 0 ? `<span>Free</span>` : `<span>from $${s.sum.minPrice.toFixed(2)}</span>`;
+      const bp = bestPrice(s, state.discounts);
+      const price = !bp
+        ? ""
+        : bp.price === 0
+          ? `<span>Free</span>`
+          : bp.pct
+            ? `<span class="price-deal">from <b>${money(bp.price)}</b> <s>${money(bp.original)}</s></span>`
+            : `<span>from ${money(bp.price)}</span>`;
       return `<li><button type="button" class="card" data-id="${escapeHtml(s.id)}" style="--delay:${animate ? Math.min(i, 10) * 35 : 0}ms${animate ? "" : ";animation:none"}"
           aria-label="${escapeHtml(`${s.name}, ${availabilityA11y(s.sum)}, up to ${formatKw(s.sum.maxKw)}, ${formatDistance(d)} away`)}">
         ${pinHtml(s.sum)}
@@ -435,8 +448,22 @@ function closeDetail(): void {
   });
 }
 
+function priceTile(bp: EffectivePrice | null, attrs: string): string {
+  if (!bp) return `<div class="tile" ${attrs}><b class="num">–</b><span>Price</span></div>`;
+  if (bp.price === 0) return `<div class="tile" ${attrs}><b class="num avail--free">Free</b><span>Price</span></div>`;
+  if (!bp.pct) return `<div class="tile" ${attrs}><b class="num">${money(bp.price)}</b><span>From /${escapeHtml(bp.unit)}</span></div>`;
+  return `<div class="tile tile--deal" ${attrs}><b class="num">${money(bp.price)}</b><span><s>${money(bp.original)}</s> <em class="deal">−${bp.pct}%</em></span></div>`;
+}
+
+function groupPriceHtml(ep: EffectivePrice | null): string {
+  if (!ep) return `<span class="group__price is-na">Price not listed</span>`;
+  if (ep.price === 0) return `<span class="group__price is-free">Free</span>`;
+  if (!ep.pct) return `<span class="group__price">${money(ep.price)}<small>/${escapeHtml(ep.unit)}</small></span>`;
+  return `<span class="group__price is-deal">${money(ep.price)}<small>/${escapeHtml(ep.unit)}</small><small class="was"><s>${money(ep.original)}</s> <em class="deal">−${ep.pct}%</em></small></span>`;
+}
+
 function detailSig(st: StationVM): string {
-  return JSON.stringify(st.points) + (state.favs.has(st.id) ? "*" : "");
+  return JSON.stringify(st.points) + (state.favs.has(st.id) ? "*" : "") + JSON.stringify(state.discounts);
 }
 
 /** Re-renders an open detail only when its data changed, preserving the nav menu and focus. */
@@ -480,7 +507,7 @@ function renderDetail(id: string, animate: boolean): void {
     <div class="detail__summary">
       <div class="tile" ${anim(0)}><b class="num avail--${s.state}">${s.state === "offline" ? "–" : `${s.free}<small style="font-size:13px;color:var(--muted)">/${s.free + s.busy}</small>`}</b><span>Free now</span></div>
       <div class="tile" ${anim(1)}><b class="num">${formatKw(s.maxKw).replace(" kW", "")}<small style="font-size:13px;color:var(--muted)"> kW</small></b><span>${tierLabel(s.tier)} ${boltsHtml(s.tier)}</span></div>
-      <div class="tile" ${anim(2)}><b class="num">${s.minPrice === null ? "–" : s.minPrice === 0 ? "Free" : `$${s.minPrice.toFixed(2)}`}</b><span>${s.minPrice ? "From /kWh" : "Price"}</span></div>
+      ${priceTile(bestPrice(st, state.discounts), anim(2))}
     </div>
     <div class="detail__cta">
       <button type="button" class="btn btn--primary" data-act="nav">${NAV}Directions</button>
@@ -491,8 +518,8 @@ function renderDetail(id: string, animate: boolean): void {
     ${ops.length ? `<div class="providers">${ops.map((o) => `<span class="provider">${opBadge(o, "m")}<span>${escapeHtml(o.name)}</span></span>`).join("")}</div>` : ""}
     ${groups
       .map((g, gi) => {
-        const pr = formatPrice(g.plug);
         const op = operatorInfo(g.operator);
+        const ep = plugPrice(g.plug, g.operator, state.discounts);
         const gFree = g.connectors.filter((c) => c.s === 1).length;
         return `<section class="group" ${anim(gi + 3)}>
           <div class="group__head">
@@ -501,7 +528,7 @@ function renderDetail(id: string, animate: boolean): void {
               <b>${escapeHtml(g.label)} · ${formatKw(g.kw)}</b>
               <small>${escapeHtml(g.current || "—")} · ${boltsHtml(Math.min(3, Math.max(0, g.kw === null ? 0 : g.kw < 11 ? 1 : g.kw < 50 ? 2 : 3)))} · ${gFree}/${g.connectors.filter((c) => c.s !== null).length} free${ops.length > 1 ? ` · <span class="op">${opBadge(op)}${escapeHtml(op.name)}</span>` : ""}</small>
             </span>
-            <span class="group__price ${pr.kind === "free" ? "is-free" : pr.kind === "na" ? "is-na" : ""}">${escapeHtml(pr.text)}${pr.unit ? `<small>${escapeHtml(pr.unit)}</small>` : ""}</span>
+            ${groupPriceHtml(ep)}
           </div>
           <div class="cells">
             ${g.connectors
@@ -711,7 +738,7 @@ function openMenu(
   m.innerHTML = items
     .map(
       (it) =>
-        `<label><input type="${kind}" name="m" value="${escapeHtml(it.value)}" ${it.checked ? "checked" : ""}/>${it.icon ?? ""}<span>${escapeHtml(it.label)}</span>${it.count !== undefined ? `<span class="count">${it.count}</span>` : ""}</label>`,
+        `<label><input type="${kind}" name="m" value="${escapeHtml(it.value)}" aria-label="${escapeHtml(it.label)}${it.count !== undefined ? `, ${it.count} sites` : ""}" ${it.checked ? "checked" : ""}/>${it.icon ?? ""}<span>${escapeHtml(it.label)}</span>${it.count !== undefined ? `<span class="count">${it.count}</span>` : ""}</label>`,
     )
     .join("");
   document.body.append(m);
@@ -909,23 +936,169 @@ locateBtn.addEventListener("click", () => {
   locate(true);
 });
 
-// ── Theme toggle ────────────────────────────────────────────────────────
+// ── Theme ───────────────────────────────────────────────────────────────
 
-$("#theme-toggle").addEventListener("click", () => {
-  const next: Theme = currentTheme() === "dark" ? "light" : "dark";
+type ThemeChoice = "auto" | Theme;
+
+function themeChoice(): ThemeChoice {
+  const t = document.documentElement.dataset.theme;
+  return t === "light" || t === "dark" ? t : "auto";
+}
+
+function setTheme(choice: ThemeChoice): void {
   const apply = () => {
-    document.documentElement.dataset.theme = next;
-    store.set("theme", next);
+    if (choice === "auto") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = choice;
     try {
-      localStorage.setItem("chargeit:theme", next);
+      if (choice === "auto") localStorage.removeItem("chargeit:theme");
+      else localStorage.setItem("chargeit:theme", choice);
     } catch {
-      /* ignore */
+      /* private mode */
     }
   };
-  withViewTransition(apply);
-  void cmap.applyTheme(next);
+  void withViewTransition(apply);
+  void cmap.applyTheme(currentTheme());
   haptic(6);
+  renderThemeChoice(choice); // the DOM update above may still be pending inside a view transition
+}
+
+function renderThemeChoice(c: ThemeChoice = themeChoice()): void {
+  settingsEl.querySelectorAll<HTMLElement>("[data-theme-choice]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.themeChoice === c)));
+}
+
+// ── Settings: corporate / fleet discounts ───────────────────────────────
+
+const settingsEl = $<HTMLDialogElement>("#settings");
+const discountList = $<HTMLUListElement>("#discount-list");
+const QUICK_PCTS = [5, 10, 15, 20, 25, 30];
+let openDiscount: string | null = null;
+
+/** Providers in today's data (busiest first), plus any the user has a discount for. */
+function providerChoices(): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const s of state.all) for (const o of s.sum.operators) counts.set(operatorInfo(o).name, (counts.get(operatorInfo(o).name) ?? 0) + 1);
+  for (const name of Object.keys(state.discounts)) if (!counts.has(name)) counts.set(name, 0);
+  return [...counts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/** Operator info by display name (falls back to a synthetic entry for names no longer in the feed). */
+function opByName(name: string) {
+  for (const s of state.all) for (const o of s.sum.operators) if (operatorInfo(o).name === name) return operatorInfo(o);
+  return operatorInfo(name);
+}
+
+function renderDiscounts(): void {
+  const items = providerChoices();
+  if (!items.length) {
+    discountList.innerHTML = `<li class="settings__hint">Providers appear here once charger data has loaded.</li>`;
+    return;
+  }
+  const active = items.filter((i) => state.discounts[i.name]);
+  const rest = items.filter((i) => !state.discounts[i.name]);
+  discountList.innerHTML = [...active, ...rest]
+    .map(({ name, count }) => {
+      const pct = state.discounts[name] ?? 0;
+      const open = openDiscount === name;
+      const id = `d-${cssId(name)}`;
+      return `<li class="disc${pct ? " is-on" : ""}${open ? " is-open" : ""}" data-name="${escapeHtml(name)}">
+        <button type="button" class="disc__row" aria-expanded="${open}" aria-controls="${id}">
+          ${opBadge(opByName(name), "m")}
+          <span class="disc__name"><b>${escapeHtml(name)}</b><small>${count ? `${count} site${count === 1 ? "" : "s"}` : "Not in today's data"}</small></span>
+          <span class="disc__val">${pct ? `−${pct}%` : "Add"}</span>
+        </button>
+        <div class="disc__edit" id="${id}" ${open ? "" : "hidden"}>
+          <div class="disc__chips" role="group" aria-label="Quick discount for ${escapeHtml(name)}">
+            ${QUICK_PCTS.map((p) => `<button type="button" class="chip" data-pct="${p}" aria-pressed="${pct === p}">${p}%</button>`).join("")}
+          </div>
+          <div class="disc__custom">
+            <label>Custom <input type="number" inputmode="decimal" min="0" max="100" step="0.5" placeholder="0" value="${pct || ""}" aria-label="Percent off for ${escapeHtml(name)}"/> % off</label>
+            ${pct ? `<button type="button" class="btn" data-clear>Remove</button>` : ""}
+          </div>
+        </div>
+      </li>`;
+    })
+    .join("");
+}
+
+function setDiscount(name: string, pct: number): void {
+  const next = { ...state.discounts };
+  const v = clampPct(pct);
+  if (v > 0) next[name] = v;
+  else delete next[name];
+  state.discounts = next;
+  store.set("discounts", next);
+  haptic(8);
+  $("#settings-dot").hidden = !Object.keys(next).length;
+  // Re-price everything on screen.
+  renderList(true);
+  if (state.selected) refreshDetail(state.selected);
+}
+
+discountList.addEventListener("click", (e) => {
+  const t = e.target as HTMLElement;
+  const li = t.closest<HTMLElement>(".disc");
+  const name = li?.dataset.name;
+  if (!li || !name) return;
+  if (t.closest(".disc__row")) {
+    openDiscount = openDiscount === name ? null : name;
+    renderDiscounts();
+    discountList.querySelector<HTMLElement>(`.disc.is-open input`)?.focus({ preventScroll: true });
+    return;
+  }
+  const chip = t.closest<HTMLElement>("[data-pct]");
+  if (chip) {
+    const p = Number(chip.dataset.pct);
+    setDiscount(name, state.discounts[name] === p ? 0 : p);
+    renderDiscounts();
+    return;
+  }
+  if (t.closest("[data-clear]")) {
+    setDiscount(name, 0);
+    openDiscount = null;
+    renderDiscounts();
+  }
 });
+discountList.addEventListener("change", (e) => {
+  const input = e.target as HTMLInputElement;
+  const name = input.closest<HTMLElement>(".disc")?.dataset.name;
+  if (!name || input.type !== "number") return;
+  setDiscount(name, clampPct(input.value));
+  renderDiscounts();
+  discountList.querySelector<HTMLElement>(`.disc.is-open input`)?.focus({ preventScroll: true });
+});
+
+function openSettings(): void {
+  closeMenus();
+  renderDiscounts();
+  renderThemeChoice();
+  settingsEl.showModal();
+  settingsEl.classList.remove("is-closing");
+  haptic(6);
+}
+function closeSettings(): void {
+  if (!settingsEl.open) return;
+  if (reducedMotion()) {
+    settingsEl.close();
+    return;
+  }
+  settingsEl.classList.add("is-closing");
+  setTimeout(() => {
+    settingsEl.close();
+    settingsEl.classList.remove("is-closing");
+  }, 220);
+}
+$("#settings-btn").addEventListener("click", openSettings);
+settingsEl.addEventListener("click", (e) => {
+  const t = e.target as HTMLElement;
+  if (t === settingsEl || t.closest("[data-close]")) closeSettings(); // backdrop or ✕
+  const choice = t.closest<HTMLElement>("[data-theme-choice]")?.dataset.themeChoice as ThemeChoice | undefined;
+  if (choice) setTheme(choice);
+});
+settingsEl.addEventListener("cancel", (e) => {
+  e.preventDefault(); // Esc: animate out instead of snapping
+  closeSettings();
+});
+$("#settings-dot").hidden = !Object.keys(state.discounts).length;
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
   if (!document.documentElement.dataset.theme) void cmap.applyTheme(currentTheme());
 });
@@ -954,6 +1127,7 @@ window.addEventListener("online", () => void refresh());
 // ── Keyboard ────────────────────────────────────────────────────────────
 
 document.addEventListener("keydown", (e) => {
+  if (settingsEl.open) return; // the dialog handles its own keys
   const typing = (e.target as HTMLElement).closest("input, textarea");
   if (e.key === "/" && !typing) {
     e.preventDefault();

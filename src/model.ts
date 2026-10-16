@@ -342,3 +342,68 @@ export function timeAgo(iso: string | null, now = Date.now()): string {
   if (h < 24) return `${h} h ago`;
   return `${Math.round(h / 24)} d ago`;
 }
+
+// ── Corporate / fleet discounts ────────────────────────────────────────
+
+/** Provider display name → percent off (0 < pct ≤ 100). */
+export type Discounts = Readonly<Record<string, number>>;
+
+/** Validates discounts read from storage (shared-origin, so never trusted). */
+export function sanitizeDiscounts(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [name, v] of Object.entries(raw as Record<string, unknown>).slice(0, 80)) {
+    const pct = clampPct(v);
+    if (typeof name === "string" && name.length > 0 && name.length <= 80 && pct > 0) out[name] = pct;
+  }
+  return out;
+}
+
+/** Coerces user input to a percentage in [0, 100] with at most one decimal; junk → 0. */
+export function clampPct(v: unknown): number {
+  const n = typeof v === "number" ? v : typeof v === "string" ? parseFloat(v.replace(",", ".")) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(100, Math.round(n * 10) / 10);
+}
+
+export function applyDiscount(price: number, pct: number): number {
+  return Math.max(0, price * (1 - pct / 100));
+}
+
+export function discountFor(operatorRaw: string, discounts: Discounts): number {
+  return discounts[operatorInfo(operatorRaw).name] ?? 0;
+}
+
+export interface EffectivePrice {
+  /** What the user pays after their discount (0 = free). */
+  price: number;
+  /** List price before discount. */
+  original: number;
+  /** Percent off applied (0 when none). */
+  pct: number;
+  unit: string;
+}
+
+/** Effective price for one plug from one provider, or null when the feed has no price. */
+export function plugPrice(plug: Pick<Plug, "price" | "priceType">, operatorRaw: string, discounts: Discounts): EffectivePrice | null {
+  if (isFreePrice(plug)) return { price: 0, original: 0, pct: 0, unit: "" };
+  if (plug.price === null) return null;
+  const pct = discountFor(operatorRaw, discounts);
+  return { price: pct ? applyDiscount(plug.price, pct) : plug.price, original: plug.price, pct, unit: plug.priceType || "kWh" };
+}
+
+/** Cheapest effective price at a station, after the user's discounts. */
+export function bestPrice(st: Station, discounts: Discounts): EffectivePrice | null {
+  let best: EffectivePrice | null = null;
+  for (const pt of st.points) {
+    for (const pl of pt.plugs) {
+      const p = plugPrice(pl, pt.operator, discounts);
+      if (p && (!best || p.price < best.price || (p.price === best.price && p.pct > best.pct))) best = p;
+    }
+  }
+  return best;
+}
+
+export function money(n: number): string {
+  return `$${n.toFixed(2)}`;
+}

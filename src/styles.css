@@ -1704,3 +1704,321 @@ svg {
     display: none;
   }
 }
+
+/* ───────────────────────── Settings ───────────────────────── */
+.icon-btn {
+  position: relative;
+}
+.icon-btn__dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--volt);
+  box-shadow: 0 0 0 2px var(--ink-900);
+}
+.settings {
+  /* <dialog> reset → full-screen layer; the panel is the visible sheet. */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  background: transparent;
+  color: var(--text);
+  overflow: hidden;
+}
+.settings::backdrop {
+  background: rgba(4, 7, 15, 0.55);
+  backdrop-filter: blur(2px);
+  animation: fade-in 260ms ease;
+}
+.settings[open] .settings__panel {
+  animation: sheet-up 420ms var(--ease-out);
+}
+.settings.is-closing .settings__panel {
+  animation: sheet-down 220ms ease-in forwards;
+}
+.settings.is-closing::backdrop {
+  animation: fade-out 220ms ease forwards;
+}
+.settings__panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 88%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 26px 26px 0 0;
+  background: var(--ink-900);
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.4);
+}
+.settings__grip {
+  height: 22px;
+  display: grid;
+  place-items: center;
+}
+.settings__grip span {
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+}
+.settings__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 6px 20px;
+}
+.settings__head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: -0.02em;
+}
+.settings__head .icon-btn {
+  background: var(--ink-800);
+}
+.settings__body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 16px calc(var(--safe-bottom) + 24px);
+}
+.settings__section {
+  margin: 14px 0 22px;
+}
+.settings__section h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.settings__hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+  list-style: none;
+}
+.settings__hint em {
+  color: var(--text);
+  font-style: normal;
+  font-weight: 600;
+}
+.settings__about p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.discounts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: 18px;
+  background: var(--ink-800);
+  overflow: hidden;
+}
+.disc + .disc {
+  border-top: 1px solid var(--line);
+}
+.disc__row {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  text-align: left;
+}
+.disc__name {
+  flex: 1;
+  min-width: 0;
+}
+.disc__name b {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.disc__name small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.disc__val {
+  flex: none;
+  min-width: 56px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+}
+.disc.is-on .disc__val {
+  color: var(--volt-ink);
+  background: var(--volt);
+  border: 1px solid transparent;
+  font-family: var(--font-display);
+}
+.disc__edit {
+  padding: 0 14px 14px;
+  animation: card-in 300ms var(--ease-out);
+}
+.disc__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.disc__chips .chip {
+  height: 38px;
+  min-width: 52px;
+  justify-content: center;
+  background: var(--ink-900);
+  backdrop-filter: none;
+}
+.disc__custom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.disc__custom label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.disc__custom input {
+  width: 84px;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--ink-900);
+  color: var(--text);
+  font: 600 16px var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+.disc__custom input:focus {
+  outline: none;
+  border-color: var(--volt);
+  box-shadow: var(--glow-volt);
+}
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--ink-800);
+}
+.segmented button {
+  min-height: 40px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--muted);
+  transition: background 200ms, color 200ms;
+}
+.segmented button[aria-checked="true"] {
+  background: var(--ink-900);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+/* Discounted prices */
+.deal {
+  font-style: normal;
+  font-weight: 700;
+  font-size: 0.85em;
+  color: var(--volt);
+}
+.price-deal b {
+  color: var(--volt);
+}
+.price-deal s,
+.tile--deal s,
+.group__price .was s {
+  color: var(--muted);
+  font-weight: 500;
+}
+.tile--deal b {
+  color: var(--volt);
+}
+.group__price.is-deal {
+  color: var(--volt);
+}
+.group__price .was {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes sheet-down {
+  to {
+    transform: translateY(100%);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (min-width: 820px) {
+  .settings__panel {
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    top: 50%;
+    width: 460px;
+    max-height: 82vh;
+    transform: translate(-50%, -50%);
+    border-radius: 24px;
+    border: 1px solid var(--line);
+  }
+  .settings[open] .settings__panel {
+    animation: pop-center 320ms var(--ease-out);
+  }
+  .settings.is-closing .settings__panel {
+    animation: none;
+    opacity: 0;
+    transition: opacity 200ms;
+  }
+  .settings__grip {
+    display: none;
+  }
+  .settings__head {
+    padding-top: 14px;
+  }
+}
+@keyframes pop-center {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -46%) scale(0.97);
+  }
+}

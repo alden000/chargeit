@@ -120,15 +120,17 @@ test.describe("ChargeIt core journeys", () => {
     await expect(sheet).toHaveAttribute("data-snap", "peek");
   });
 
-  test("theme toggle switches and persists", async ({ page, api: _ }) => {
+  test("theme choice in Settings switches and persists", async ({ page, api: _ }) => {
     await page.goto("/");
     await ready(page);
     const before = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    await page.locator("#theme-toggle").click();
+    const other = (await page.evaluate(() => matchMedia("(prefers-color-scheme: light)").matches)) ? "Dark" : "Light";
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("radio", { name: other }).click();
+    await expect(page.getByRole("radio", { name: other })).toHaveAttribute("aria-checked", "true");
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor)).not.toBe(before);
-    const theme = await page.evaluate(() => document.documentElement.dataset.theme);
     await page.reload();
-    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(theme);
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(other.toLowerCase());
   });
 });
 
@@ -213,5 +215,60 @@ test.describe("hardening (QA regressions)", () => {
     await expect(page.locator("#splash")).toHaveCount(0, { timeout: 8_000 });
     await expect(page.locator('[data-f="speed"]')).toContainText("Any speed");
     expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+  });
+});
+
+test.describe("corporate / fleet discounts", () => {
+  const spPrice = () => {
+    for (const p of clarke.points) for (const pl of p.plugs) if (pl.price) return pl.price;
+    throw new Error("fixture: Clarke Quay has no price");
+  };
+
+  test("adding a provider discount re-prices the list and detail, and persists", async ({ page, api: _ }) => {
+    await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+    await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+    const list = spPrice();
+
+    await page.getByRole("button", { name: "Settings" }).click();
+    const dialog = page.getByRole("dialog", { name: "Settings" });
+    await expect(dialog).toBeVisible();
+    await dialog.locator('.disc[data-name="SP Mobility"] .disc__row').click();
+    await dialog.locator('.disc[data-name="SP Mobility"] [data-pct="20"]').click();
+    await expect(dialog.locator('.disc[data-name="SP Mobility"] .disc__val')).toHaveText("−20%");
+    // Active discounts float to the top.
+    await expect(dialog.locator(".disc").first()).toHaveAttribute("data-name", "SP Mobility");
+    await expect(page.locator("#settings-dot")).toBeVisible();
+
+    // Custom value via the input.
+    const input = dialog.locator('.disc[data-name="SP Mobility"] input');
+    await input.fill("12.5");
+    await input.press("Enter");
+    await input.blur();
+    await expect(dialog.locator('.disc[data-name="SP Mobility"] .disc__val')).toHaveText("−12.5%");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+
+    const expected = `$${(list * 0.875).toFixed(2)}`;
+    await expect(page.locator("#view-detail .tile--deal b")).toHaveText(expected);
+    await expect(page.locator("#view-detail .tile--deal s")).toHaveText(`$${list.toFixed(2)}`);
+    await expect(page.locator("#view-detail .group__price.is-deal", { hasText: expected })).toHaveCount(1);
+
+    await page.reload();
+    await expect(page.locator("#view-detail .tile--deal b")).toHaveText(expected);
+  });
+
+  test("removing a discount restores list prices; junk input is rejected", async ({ page, api: _ }) => {
+    await page.addInitScript(() => localStorage.setItem("chargeit:discounts", JSON.stringify({ "SP Mobility": 10, Evil: "<img src=x onerror=alert(1)>" })));
+    await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+    await expect(page.locator("#view-detail .tile--deal")).toBeVisible();
+    await page.getByRole("button", { name: "Settings" }).click();
+    const dialog = page.getByRole("dialog", { name: "Settings" });
+    await expect(dialog.locator('.disc[data-name="Evil"]')).toHaveCount(0);
+    await dialog.locator('.disc[data-name="SP Mobility"] .disc__row').click();
+    await dialog.getByRole("button", { name: "Remove" }).click();
+    await expect(dialog.locator('.disc[data-name="SP Mobility"] .disc__val')).toHaveText("Add");
+    await dialog.getByRole("button", { name: "Close settings" }).click();
+    await expect(page.locator("#view-detail .tile--deal")).toHaveCount(0);
+    await expect(page.locator("#settings-dot")).toBeHidden();
   });
 });

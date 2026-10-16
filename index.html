@@ -61,8 +61,9 @@
           <button id="live" class="live" type="button" aria-live="polite" title="Refresh now">
             <span class="live__dot"></span><span class="live__text">Connecting…</span>
           </button>
-          <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle light or dark theme">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path class="i-moon" d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" /><g class="i-sun"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></g></svg>
+          <button id="settings-btn" class="icon-btn" type="button" aria-label="Settings" aria-haspopup="dialog">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+            <span id="settings-dot" class="icon-btn__dot" hidden></span>
           </button>
         </div>
         <div class="search" role="search">
@@ -101,6 +102,37 @@
       </section>
 
       <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+      <dialog id="settings" class="settings" aria-labelledby="settings-title">
+        <div class="settings__panel">
+          <div class="settings__grip" aria-hidden="true"><span></span></div>
+          <header class="settings__head">
+            <h2 id="settings-title">Settings</h2>
+            <button type="button" class="icon-btn" data-close aria-label="Close settings">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+            </button>
+          </header>
+          <div class="settings__body">
+            <section class="settings__section" aria-labelledby="disc-h">
+              <h3 id="disc-h">Corporate &amp; fleet discounts</h3>
+              <p class="settings__hint">Got a discount with a provider? Add it and every price in ChargeIt shows what <em>you</em> pay. Saved on this device only.</p>
+              <ul id="discount-list" class="discounts"></ul>
+            </section>
+            <section class="settings__section" aria-labelledby="look-h">
+              <h3 id="look-h">Appearance</h3>
+              <div class="segmented" role="radiogroup" aria-labelledby="look-h">
+                <button type="button" role="radio" data-theme-choice="auto">Auto</button>
+                <button type="button" role="radio" data-theme-choice="light">Light</button>
+                <button type="button" role="radio" data-theme-choice="dark">Dark</button>
+              </div>
+            </section>
+            <section class="settings__section settings__about">
+              <p>Charging data: LTA DataMall, under the Singapore Open Data Licence. Places: OneMap © SLA. Map © OpenFreeMap, OpenMapTiles, OpenStreetMap contributors.</p>
+              <p>Prices are set by each provider and may change. Check the provider's app before charging.</p>
+            </section>
+          </div>
+        </div>
+      </dialog>
     </div>
     <noscript>ChargeIt needs JavaScript to show live charging points.</noscript>
     <script type="module" src="/src/main.ts"></script>
