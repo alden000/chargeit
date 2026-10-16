@@ -20,6 +20,7 @@ import {
   tierLabel,
   timeAgo,
   toViewModels,
+  bestKwhPrice,
   bestPrice,
   primaryOperator,
   clampPct,
@@ -74,6 +75,7 @@ function loadFilters(): Filters {
     minKw,
     operators: Array.isArray(raw.operators) ? raw.operators.filter((o): o is string => typeof o === "string").slice(0, 30) : [],
     favourites: raw.favourites === true,
+    maxPrice: typeof raw.maxPrice === "number" && raw.maxPrice >= 0 && raw.maxPrice <= 10 ? Math.round(raw.maxPrice * 100) / 100 : null,
   };
 }
 
@@ -290,7 +292,7 @@ function updateLive(): void {
 // ── Filtering + list ────────────────────────────────────────────────────
 
 function refilter(): void {
-  state.filtered = state.all.filter((s) => matchesFilters(s, state.filters, state.favs));
+  state.filtered = state.all.filter((s) => matchesFilters(s, state.filters, state.favs, state.discounts));
   // Badge preference: providers the user filtered for, then the ones they have a discount with.
   const mineNames = Object.keys(state.discounts);
   const prefer = [...state.filters.operators, ...mineNames];
@@ -681,7 +683,7 @@ function writeHash(id: string | null): void {
 
 function activeFilterCount(): number {
   const f = state.filters;
-  return Number(f.freeNow) + Number(f.dc) + Number(f.minKw > 0) + Number(f.operators.length > 0) + Number(f.favourites);
+  return Number(f.freeNow) + Number(f.dc) + Number(f.minKw > 0) + Number(f.operators.length > 0) + Number(f.favourites) + Number(f.maxPrice !== null);
 }
 
 function setFilters(f: Filters): void {
@@ -700,6 +702,7 @@ function renderFilters(): void {
     `<button type="button" class="chip" data-f="freeNow" aria-pressed="${f.freeNow}"><span>Free now</span></button>`,
     `<button type="button" class="chip" data-f="dc" aria-pressed="${f.dc}">${BOLT}<span>DC fast</span></button>`,
     `<button type="button" class="chip" data-f="speed" aria-pressed="${f.minKw > 0}" aria-haspopup="true"><span>${speedLabel}</span>${CARET}</button>`,
+    `<button type="button" class="chip" data-f="price" aria-pressed="${f.maxPrice !== null}" aria-haspopup="dialog"><span>${f.maxPrice === null ? "Any price" : f.maxPrice === 0 ? "Free only" : `≤ ${money(f.maxPrice)}`}</span>${CARET}</button>`,
     `<button type="button" class="chip" data-f="ops" aria-pressed="${f.operators.length > 0}" aria-haspopup="true"><span>${escapeHtml(opLabel)}</span>${CARET}</button>`,
     `<button type="button" class="chip" data-f="favourites" aria-pressed="${f.favourites}">${STAR.replace("<svg", '<svg style="fill:currentColor"')}<span>Saved</span></button>`,
   ];
@@ -733,6 +736,9 @@ filtersEl.addEventListener("click", (e) => {
         setFilters({ ...state.filters, minKw: Number(vals[0]) as Filters["minKw"] }),
       );
       break;
+    case "price":
+      openPriceMenu(chip);
+      break;
     case "ops": {
       const counts = new Map<string, number>();
       for (const s of state.all) for (const o of s.sum.operators) counts.set(operatorInfo(o).name, (counts.get(operatorInfo(o).name) ?? 0) + 1);
@@ -745,6 +751,78 @@ filtersEl.addEventListener("click", (e) => {
     }
   }
 });
+
+// ── Price slider ────────────────────────────────────────────────────────
+
+/** Slider domain: $0 up to the dearest listed price (rounded up to 5¢), plus one "Any price" stop. */
+function priceDomain(): { max: number; any: number } {
+  let hi = 0;
+  for (const s of state.all) {
+    const p = bestKwhPrice(s, state.discounts);
+    if (p !== null && p > hi) hi = p;
+  }
+  const max = Math.max(0.5, Math.ceil(hi * 20) / 20);
+  // A clear gap before "Any" so the last price tick and the Any stop don't collide.
+  return { max, any: Math.round((max + 0.1) * 100) / 100 };
+}
+
+function openPriceMenu(anchorEl: HTMLElement): void {
+  if (menuEl) {
+    const same = menuAnchor === "price";
+    closeMenus();
+    if (same) return;
+  }
+  menuAnchor = "price";
+  const { max, any } = priceDomain();
+  const m = document.createElement("div");
+  m.className = "chip-menu price-menu";
+  m.setAttribute("role", "dialog");
+  m.setAttribute("aria-label", "Maximum price");
+  const start = state.filters.maxPrice ?? any;
+  m.innerHTML = `
+    <div class="price-menu__head"><b class="num" data-out></b><span data-count></span></div>
+    <input type="range" min="0" max="${any}" step="0.01" value="${start}" aria-label="Maximum price per kWh"/>
+    <div class="price-menu__scale" aria-hidden="true">${[0, Math.round((max / 3) * 20) / 20, Math.round(((2 * max) / 3) * 20) / 20]
+      .map((v) => `<span style="left:${((v / any) * 100).toFixed(2)}%">${v === 0 ? "$0" : money(v)}</span>`)
+      .join("")}<span style="left:100%">Any</span></div>
+    <p class="price-menu__hint">Uses the cheapest price at each site${Object.keys(state.discounts).length ? ", after your discounts" : ""}. Sites without a listed price are hidden unless set to Any.</p>
+    <div class="price-menu__actions"><button type="button" class="btn" data-any>Any price</button><button type="button" class="btn btn--primary" data-done>Done</button></div>`;
+  document.body.append(m);
+  const r = anchorEl.getBoundingClientRect();
+  m.style.top = `${r.bottom + 6}px`;
+  m.style.left = `${Math.max(14, Math.min(r.left, window.innerWidth - m.offsetWidth - 14))}px`;
+  const input = m.querySelector<HTMLInputElement>("input")!;
+  const out = m.querySelector<HTMLElement>("[data-out]")!;
+  const count = m.querySelector<HTMLElement>("[data-count]")!;
+
+  let raf = 0;
+  const apply = (v: number) => {
+    const isAny = v >= any - 0.001;
+    const next = isAny ? null : Math.round(v * 100) / 100;
+    out.textContent = next === null ? "Any price" : next === 0 ? "Free only" : `Up to ${money(next)}/kWh`;
+    input.setAttribute("aria-valuetext", next === null ? "Any price, including unlisted" : `Up to ${money(next)} per kWh`);
+    input.style.setProperty("--fill", `${(v / any) * 100}%`);
+    if (next === state.filters.maxPrice) return;
+    state.filters = { ...state.filters, maxPrice: next };
+    store.set("filters", state.filters);
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      refilter();
+      count.textContent = `${state.filtered.length.toLocaleString()} site${state.filtered.length === 1 ? "" : "s"}`;
+    });
+  };
+  count.textContent = `${state.filtered.length.toLocaleString()} sites`;
+  apply(start);
+  input.addEventListener("input", () => apply(Number(input.value)));
+  input.addEventListener("change", () => haptic(6));
+  m.querySelector("[data-any]")!.addEventListener("click", () => {
+    input.value = String(any);
+    apply(any);
+  });
+  m.querySelector("[data-done]")!.addEventListener("click", closeMenus);
+  menuEl = m;
+  input.focus();
+}
 
 let menuEl: HTMLElement | null = null;
 let menuAnchor: string | null = null;
@@ -802,6 +880,10 @@ function openMenu(
 }
 document.addEventListener("pointerdown", (e) => {
   if (menuEl && !menuEl.contains(e.target as Node) && !(e.target as HTMLElement).closest(".chip")) closeMenus();
+});
+document.addEventListener("keydown", (e) => {
+  // The global Esc handler ignores keys typed into inputs, so the slider closes its own popover.
+  if (e.key === "Escape" && menuEl?.contains(e.target as Node)) closeMenus();
 });
 
 // ── Search ──────────────────────────────────────────────────────────────

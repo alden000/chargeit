@@ -268,11 +268,18 @@ export interface Filters {
   minKw: 0 | 22 | 50 | 100;
   operators: string[];
   favourites: boolean;
+  /** Max effective $/kWh (after the user's discounts); null = any price, incl. unlisted. */
+  maxPrice: number | null;
 }
 
-export const DEFAULT_FILTERS: Filters = { freeNow: false, dc: false, minKw: 0, operators: [], favourites: false };
+export const DEFAULT_FILTERS: Filters = { freeNow: false, dc: false, minKw: 0, operators: [], favourites: false, maxPrice: null };
 
-export function matchesFilters(st: StationVM, f: Filters, favs: ReadonlySet<string>): boolean {
+export function matchesFilters(st: StationVM, f: Filters, favs: ReadonlySet<string>, discounts: Discounts = {}): boolean {
+  if (f.maxPrice !== null) {
+    // Price filter on: stations without a listed per-kWh price are excluded entirely.
+    const p = bestKwhPrice(st, discounts);
+    if (p === null || p > f.maxPrice + 1e-9) return false;
+  }
   if (f.freeNow && st.sum.free === 0) return false;
   if (f.dc && !st.sum.hasDC) return false;
   if (f.minKw && (st.sum.maxKw ?? 0) < f.minKw) return false;
@@ -423,4 +430,19 @@ export function primaryOperator(st: Station, prefer: readonly string[] = []): { 
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([raw]) => operatorInfo(raw));
   const op = ranked.find((o) => prefer.includes(o.name)) ?? ranked[0] ?? operatorInfo("");
   return { op, others: Math.max(0, ranked.length - 1) };
+}
+
+/** Cheapest effective per-kWh price at a station after discounts (0 = free), or null if none listed. */
+export function bestKwhPrice(st: Station, discounts: Discounts): number | null {
+  let best: number | null = null;
+  for (const pt of st.points) {
+    for (const pl of pt.plugs) {
+      const p = plugPrice(pl, pt.operator, discounts);
+      if (!p) continue;
+      const unit = p.unit.toLowerCase();
+      if (p.price !== 0 && unit !== "kwh" && unit !== "") continue; // only compare like with like
+      if (best === null || p.price < best) best = p.price;
+    }
+  }
+  return best;
 }

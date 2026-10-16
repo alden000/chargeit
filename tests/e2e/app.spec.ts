@@ -329,3 +329,34 @@ test("no discounts means no highlighting", async ({ page, api: _ }) => {
   await expect(page.locator(".pin-host .pin").first()).toBeVisible();
   await expect(page.locator(".pin.is-mine, .pin.is-dim")).toHaveCount(0);
 });
+
+test("price slider: hides dearer and unlisted sites; Any restores everything", async ({ page, api: _ }) => {
+  await page.goto("/");
+  await ready(page);
+  const total = await page.evaluate(() => (window as unknown as { __chargeit: { state: { filtered: unknown[] } } }).__chargeit.state.filtered.length);
+  await page.locator('[data-f="price"]').click();
+  const slider = page.getByRole("slider", { name: "Maximum price per kWh" });
+  await expect(slider).toBeVisible();
+  await slider.fill("0.6");
+  await expect(page.locator(".price-menu [data-out]")).toHaveText("Up to $0.60/kWh");
+  await expect(page.locator('[data-f="price"]')).toContainText("≤ $0.60");
+  const filtered = await page.evaluate(() => (window as unknown as { __chargeit: { state: { filtered: Array<{ points: Array<{ plugs: Array<{ price: number | null; priceType: string }> }> }> } } }).__chargeit.state.filtered);
+  expect(filtered.length).toBeGreaterThan(0);
+  expect(filtered.length).toBeLessThan(total);
+  for (const s of filtered) {
+    const prices = s.points.flatMap((p) => p.plugs.map((pl) => (pl.priceType === "free" ? 0 : pl.price))).filter((x): x is number => x !== null);
+    expect(prices.length).toBeGreaterThan(0); // unlisted are gone
+    expect(Math.min(...prices)).toBeLessThanOrEqual(0.6 + 1e-9);
+  }
+  await page.getByRole("button", { name: "Done" }).click();
+  for (const t of await page.locator(".card .card__meta").allInnerTexts()) expect(t).toMatch(/from \$0\.[0-5]\d|from \$0\.60|Free/);
+
+  // Persisted across reloads.
+  await page.reload();
+  await ready(page);
+  await expect(page.locator('[data-f="price"]')).toContainText("≤ $0.60");
+  await page.locator('[data-f="price"]').click();
+  await page.getByRole("button", { name: "Any price" }).click();
+  await expect(page.locator('[data-f="price"]')).toContainText("Any price");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __chargeit: { state: { filtered: unknown[] } } }).__chargeit.state.filtered.length)).toBe(total);
+});

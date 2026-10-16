@@ -2181,3 +2181,99 @@ svg {
   outline: 2px solid var(--volt);
   outline-offset: 2px;
 }
+
+/* Price slider popover */
+.price-menu {
+  width: min(340px, calc(100vw - 28px));
+  padding: 14px 16px 12px;
+}
+.price-menu__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.price-menu__head b {
+  font-size: 19px;
+  color: var(--volt);
+}
+.price-menu__head span {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.price-menu input[type="range"] {
+  --fill: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: pan-x;
+}
+.price-menu input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--volt) 0 var(--fill), var(--ink-700) var(--fill) 100%);
+}
+.price-menu input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--volt) 0 var(--fill), var(--ink-700) var(--fill) 100%);
+}
+.price-menu input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -10px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--volt);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), 0 0 0 6px color-mix(in srgb, var(--volt) 18%, transparent);
+  transition: transform 160ms var(--ease-spring);
+}
+.price-menu input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.price-menu input[type="range"]::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid var(--volt);
+}
+.price-menu input[type="range"]:focus-visible {
+  outline: none;
+}
+.price-menu input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--ink-900), 0 0 0 5px var(--volt);
+}
+.price-menu__scale {
+  position: relative;
+  height: 16px;
+  /* inset by the thumb radius so labels line up with the thumb centre */
+  margin: 2px 13px 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.price-menu__scale span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.price-menu__hint {
+  margin: 10px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.price-menu__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}

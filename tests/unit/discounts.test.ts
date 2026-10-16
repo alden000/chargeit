@@ -52,3 +52,30 @@ describe("discounts", () => {
     expect(plugPrice({ price: null, priceType: "" }, "X", {})).toBeNull();
   });
 });
+
+import { DEFAULT_FILTERS, bestKwhPrice, matchesFilters, toViewModels } from "../../src/model.ts";
+
+describe("price filter", () => {
+  const mk = (id: string, price: number | null, priceType = "kWh", operator = "SHELL SINGAPORE PTE. LTD.") => ({
+    id, name: id, address: "", postal: "", lat: 1.3, lng: 103.8,
+    points: [{ operator, position: "", hours: "", plugs: [{ type: "Type 2", current: "AC" as const, kw: 22, price, priceType, connectors: [{ id: "c", s: 1 as const }] }] }],
+  });
+  const vms = toViewModels({ v: 1, feedUpdated: null, fetchedAt: "", stations: [mk("cheap", 0.5), mk("dear", 0.9), mk("none", null, ""), mk("free", 0, "free"), mk("sp", 0.8, "kWh", "SP MOBILITY PTE. LTD.")] });
+  const run = (maxPrice: number | null, discounts = {}) => vms.filter((s) => matchesFilters(s, { ...DEFAULT_FILTERS, maxPrice }, new Set(), discounts)).map((s) => s.id);
+
+  it("Any price shows everything, including unlisted", () => {
+    expect(run(null)).toEqual(["cheap", "dear", "none", "free", "sp"]);
+  });
+  it("a max price hides dearer and unlisted stations, keeps free", () => {
+    expect(run(0.6)).toEqual(["cheap", "free"]);
+    expect(run(0.9)).toEqual(["cheap", "dear", "free", "sp"]);
+    expect(run(0)).toEqual(["free"]);
+  });
+  it("uses the price after the user's discount", () => {
+    expect(run(0.6, { "SP Mobility": 25 })).toEqual(["cheap", "free", "sp"]); // 0.80 → 0.60
+  });
+  it("bestKwhPrice ignores non-kWh units", () => {
+    expect(bestKwhPrice(mk("x", 2, "hour"), {})).toBeNull();
+    expect(bestKwhPrice(mk("y", 0.7), {})).toBe(0.7);
+  });
+});
