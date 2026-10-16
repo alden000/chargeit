@@ -31,13 +31,13 @@ export function countTo(el: HTMLElement, to: number, ms = 600): void {
 }
 
 /** Runs a DOM update inside a View Transition where supported. */
-export function withViewTransition(update: () => void): void {
-  const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+export function withViewTransition(update: () => void): Promise<void> {
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => { updateCallbackDone: Promise<void> } };
   if (!reducedMotion() && typeof doc.startViewTransition === "function") {
-    doc.startViewTransition(update);
-  } else {
-    update();
+    return doc.startViewTransition(update).updateCallbackDone.catch(() => undefined);
   }
+  update();
+  return Promise.resolve();
 }
 
 export function escapeHtml(s: string): string {

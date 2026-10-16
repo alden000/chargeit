@@ -30,7 +30,22 @@ export class BottomSheet {
     // capture kicks in) must not drop the gesture. Touch is implicitly captured.
     window.addEventListener("pointermove", (e) => this.onMove(e), { passive: false });
     window.addEventListener("pointerup", (e) => this.onUp(e));
-    window.addEventListener("pointercancel", (e) => this.onUp(e));
+    window.addEventListener("pointercancel", (e) => this.onUp(e, true));
+    // In "full", content scrolls natively (touch-action: pan-y). When it's already
+    // at the top and the finger pulls down, claim the gesture before the browser
+    // starts a scroll, so it collapses the sheet instead of firing pointercancel.
+    let touchY = 0;
+    el.addEventListener("touchstart", (e) => (touchY = e.touches[0]?.clientY ?? 0), { passive: true });
+    el.addEventListener(
+      "touchmove",
+      (e) => {
+        if (this.snap !== "full" || !e.cancelable) return;
+        const scroller = this.scrollers().find((s) => s.contains(e.target as Node));
+        const dy = (e.touches[0]?.clientY ?? 0) - touchY;
+        if (!scroller || (scroller.scrollTop <= 0 && dy > 0) || this.drag?.moved) e.preventDefault();
+      },
+      { passive: false },
+    );
     el.addEventListener("keydown", (e) => {
       if (!(e.target as HTMLElement).closest(".sheet__grip, .sheet__head")) return;
       if (e.key === "ArrowUp") this.step(1);
@@ -172,11 +187,12 @@ export class BottomSheet {
     e.preventDefault();
   }
 
-  private onUp(e: PointerEvent): void {
+  private onUp(e: PointerEvent, cancelled = false): void {
     const d = this.drag;
     if (!d || d.id !== e.pointerId) return;
     this.drag = null;
     if (!d.moved) return;
+    if (cancelled) d.vel = 0; // browser took over the gesture: settle, never fling
     // Swallow the click that follows a drag.
     const swallow = (ev: Event) => {
       ev.stopPropagation();

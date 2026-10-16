@@ -87,6 +87,22 @@ describe("normalizeBatch", () => {
     for (const id of ids) expect(id).toMatch(/^[A-Za-z0-9-]+$/);
   });
 
+  it("never glues the digits of a kW range together (QA #5)", () => {
+    const st = rawStation();
+    const plug = (st.chargingPoints as any[])[0].plugTypes[0];
+    plug.powerRating = "7.4 / 22";
+    plug.price = "$0.65/kWh";
+    const p = normalizeBatch({ evLocationsData: [st] }).stations[0].points[0].plugs[0];
+    expect(p.kw).toBe(22);
+    expect(p.price).toBe(0.65);
+  });
+
+  it("keeps station ids stable when LTA renames a site (QA #12)", () => {
+    const a = normalizeBatch({ evLocationsData: [rawStation()] }).stations[0].id;
+    const b = normalizeBatch({ evLocationsData: [rawStation({ name: "CLARKE QUAY (RENAMED)" })] }).stations[0].id;
+    expect(a).toBe(b);
+  });
+
   it("treats priceType 'free' as a zero price", () => {
     const st = rawStation();
     (st.chargingPoints as any[])[0].plugTypes[0].priceType = "Free";
@@ -123,6 +139,10 @@ describe("helpers", () => {
     expect(parseStatus("")).toBeNull();
     expect(parseStatus("100")).toBeNull();
     expect(parseStatus(undefined)).toBeNull();
+  });
+  it("toIsoSgt keeps SGT when the time has fractional seconds (QA #6)", () => {
+    expect(toIsoSgt("2026-10-02 19:15:00.123")).toBe("2026-10-02T11:15:00.123Z");
+    expect(toIsoSgt("2026-10-02T19:15:00+08:00")).toBe("2026-10-02T11:15:00.000Z");
   });
   it("toIsoSgt treats zone-less times as Singapore time", () => {
     expect(toIsoSgt("2026-01-01 08:00:00")).toBe("2026-01-01T00:00:00.000Z");

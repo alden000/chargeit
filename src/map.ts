@@ -153,6 +153,8 @@ interface MarkerEntry {
   marker: Marker;
   el: HTMLElement;
   sig: string;
+  coords: [number, number];
+  clusterId: number;
 }
 
 export interface ChargeMapEvents {
@@ -301,12 +303,14 @@ export class ChargeMap {
           el.style.setProperty("--delay", `${Math.min(stagger++, 40) * 14}ms`);
           el.addEventListener("animationend", () => el.style.removeProperty("--delay"), { once: true });
         }
-        entry = { marker: new Marker({ element: el }).setLngLat(coords), el, sig: "" };
+        const created: MarkerEntry = { marker: new Marker({ element: el }).setLngLat(coords), el, sig: "", coords, clusterId: Number(p.cluster_id) };
+        entry = created;
         this.markers.set(key, entry);
         if (isCluster) {
+          // Read the entry's *current* cluster id/position: both shift when data refreshes.
           el.addEventListener("click", (e) => {
             e.stopPropagation();
-            void this.expandCluster(Number(p.cluster_id), coords);
+            void this.expandCluster(created.clusterId, created.coords);
           });
         } else {
           const id = String(p.id);
@@ -316,6 +320,11 @@ export class ChargeMap {
           });
         }
       }
+      if (entry.coords[0] !== coords[0] || entry.coords[1] !== coords[1]) {
+        entry.coords = coords;
+        entry.marker.setLngLat(coords);
+      }
+      if (isCluster) entry.clusterId = Number(p.cluster_id);
       if (entry.sig !== sig) {
         const ticked = entry.sig !== "";
         entry.sig = sig;

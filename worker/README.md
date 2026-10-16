@@ -28,7 +28,7 @@ That works out to at most about 2 subrequests per minute per edge location,
 which is comfortably within the Workers Free plan.
 
 The cached body carries no CORS headers. CORS is added per request from the
-allow-list (`https://alden000.github.io` plus localhost dev ports), so one
+allow-list (`https://chargeit.wwweeeiii.com`, `https://alden000.github.io` and localhost dev ports), so one
 origin can never poison the cache for another. To override the allow-list, set
 the plain var `ALLOWED_ORIGINS` (comma-separated).
 

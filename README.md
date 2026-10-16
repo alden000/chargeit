@@ -7,8 +7,8 @@ web app (PWA) that shows every public EV charging point in Singapore. For each
 one you can see live availability, charging speed, the charge provider and the
 price, on a map built for one-handed use.
 
-**Live app:** https://alden000.github.io/chargeit/
-**Demo snapshot (works without the API):** https://alden000.github.io/chargeit/?demo
+**Live app:** https://chargeit.wwweeeiii.com/
+**Demo snapshot (works without the API):** https://chargeit.wwweeeiii.com/?demo
 
 | | |
 |---|---|
@@ -65,9 +65,10 @@ If you'd rather use the Cloudflare dashboard, see [worker/README.md](worker/READ
 
 ### 2. Turn on GitHub Pages
 
-Go to **Settings → Pages → Build and deployment → Source: GitHub Actions**. Every
-push to `main` (or to this feature branch) then runs the full QA suite and
-deploys.
+Go to **Settings → Pages → Build and deployment → Source: GitHub Actions**, and
+set **Custom domain** to `chargeit.wwweeeiii.com` with **Enforce HTTPS** turned
+on. Every push to `main` (or to this feature branch) then runs the full QA suite
+and deploys.
 
 > If the deploy job says the branch isn't allowed to deploy, go to
 > **Settings → Environments → github-pages** and add the branch under

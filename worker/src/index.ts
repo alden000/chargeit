@@ -26,9 +26,14 @@ export interface Env {
 const LTA_BATCH_URL = "https://datamall2.mytransport.sg/ltaodataservice/EVCBatch";
 const FRESH_TTL = 60; // seconds an upstream pull is reused
 const STALE_TTL = 24 * 60 * 60; // seconds a last-good copy may be served if LTA fails
-const UPSTREAM_TIMEOUT_MS = 20_000;
+// One overall budget for the whole two-step pull, bodies included. It must stay
+// well under the app's own 15 s timeout so the last-good fallback reaches
+// clients before they give up.
+const UPSTREAM_DEADLINE_MS = 8_000;
+// After a failed pull, don't hit LTA again for this long (protects the key's quota).
+const RETRY_BACKOFF_MS = 20_000;
 
-const DEFAULT_ORIGINS = ["https://alden000.github.io", "http://localhost:5173", "http://localhost:4173"];
+const DEFAULT_ORIGINS = ["https://chargeit.wwweeeiii.com", "https://alden000.github.io", "http://localhost:5173", "http://localhost:4173"];
 
 // Fixed cache keys: the cached body carries no CORS headers, they're added per
 // request on the way out — so one origin can never poison another's entry.
@@ -46,6 +51,7 @@ interface Snapshot {
 // on one isolate costs exactly one upstream pull.
 let memo: { snap: Snapshot; at: number } | null = null;
 let inflight: Promise<Snapshot> | null = null;
+let lastFailureAt = 0;
 
 function allowedOrigins(env: Env): Set<string> {
   const extra = (env.ALLOWED_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -74,16 +80,6 @@ function json(request: Request, env: Env, body: string, status = 200, extra: Rec
       ...extra,
     },
   });
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
-  const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort("timeout"), UPSTREAM_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...init, signal: ctl.signal });
-  } finally {
-    clearTimeout(t);
-  }
 }
 
 function findLink(obj: unknown): string | null {
@@ -116,17 +112,25 @@ async function readJson(res: Response): Promise<unknown> {
 
 export async function pullFromLta(env: Env): Promise<ChargersPayload> {
   if (!env.LTA_ACCOUNT_KEY) throw new Error("LTA_ACCOUNT_KEY secret is not configured");
-  const meta = await fetchWithTimeout(LTA_BATCH_URL, {
-    headers: { AccountKey: env.LTA_ACCOUNT_KEY, accept: "application/json" },
-  });
-  if (!meta.ok) throw new Error(`EVCBatch responded ${meta.status}`);
-  const link = findLink(await meta.json());
-  if (!link) throw new Error("EVCBatch response had no download Link");
-  const file = await fetchWithTimeout(link);
-  if (!file.ok) throw new Error(`EVCBatch file responded ${file.status}`);
-  const payload = normalizeBatch(await readJson(file));
-  if (!payload.stations.length) throw new Error("EVCBatch file contained no stations");
-  return payload;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new Error("upstream deadline exceeded")), UPSTREAM_DEADLINE_MS);
+  const deadline = new Promise<never>((_, reject) => ctl.signal.addEventListener("abort", () => reject(ctl.signal.reason), { once: true }));
+  // Race every step (including body reads) against the deadline.
+  const step = <T>(p: Promise<T>) => Promise.race([p, deadline]);
+  try {
+    const meta = await step(fetch(LTA_BATCH_URL, { headers: { AccountKey: env.LTA_ACCOUNT_KEY, accept: "application/json" }, signal: ctl.signal }));
+    if (!meta.ok) throw new Error(`EVCBatch responded ${meta.status}`);
+    const link = findLink(await step(meta.json()));
+    if (!link) throw new Error("EVCBatch response had no download Link");
+    const file = await step(fetch(link, { signal: ctl.signal }));
+    if (!file.ok) throw new Error(`EVCBatch file responded ${file.status}`);
+    const payload = normalizeBatch(await step(readJson(file)));
+    if (!payload.stations.length) throw new Error("EVCBatch file contained no stations");
+    return payload;
+  } finally {
+    clearTimeout(timer);
+    deadline.catch(() => undefined);
+  }
 }
 
 function toSnapshot(payload: ChargersPayload): Snapshot {
@@ -167,13 +171,22 @@ async function getSnapshot(env: Env, ctx: ExecutionContext): Promise<Snapshot> {
     return fresh;
   }
 
+  // Recently failed: don't hammer LTA, go straight to the last good copy.
+  if (Date.now() - lastFailureAt < RETRY_BACKOFF_MS) {
+    const last = memo?.snap ?? (await readCache(STALE_KEY));
+    if (last) return { ...last, stale: true };
+    throw new Error("upstream recently failed; backing off");
+  }
+
   inflight ??= (async () => {
     try {
       const snap = toSnapshot(await pullFromLta(env));
+      lastFailureAt = 0;
       memo = { snap, at: Date.now() };
       ctx.waitUntil(Promise.all([writeCache(FRESH_KEY, snap, FRESH_TTL), writeCache(STALE_KEY, snap, STALE_TTL)]));
       return snap;
     } catch (err) {
+      lastFailureAt = Date.now();
       const last = memo?.snap ?? (await readCache(STALE_KEY));
       if (last) {
         console.warn("LTA pull failed, serving last good copy:", String(err));
@@ -233,6 +246,7 @@ export default {
           keyConfigured: Boolean(env.LTA_ACCOUNT_KEY),
           feedUpdated: snap?.feedUpdated ?? null,
           fetchedAt: snap?.fetchedAt ?? null,
+          stale: snap ? Date.now() - Date.parse(snap.fetchedAt) > FRESH_TTL * 1000 * 2 : null,
         }),
         200,
         { "Cache-Control": "no-store" },
@@ -251,4 +265,5 @@ export default {
 export function __resetForTests(): void {
   memo = null;
   inflight = null;
+  lastFailureAt = 0;
 }

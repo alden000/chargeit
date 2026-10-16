@@ -1037,6 +1037,11 @@ svg {
 .sheet[data-snap="peek"] .list {
   overflow: hidden;
 }
+/* Below "full", vertical gestures move the sheet; only in "full" does content scroll natively. */
+.sheet:not([data-snap="full"]) .list,
+.sheet:not([data-snap="full"]) .view--detail {
+  touch-action: none;
+}
 
 /* Station card */
 .card {

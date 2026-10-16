@@ -57,14 +57,27 @@ const store = {
 
 // ── State ───────────────────────────────────────────────────────────────
 
+/** Reads saved filters defensively: storage is shared with other pages on the same origin. */
+function loadFilters(): Filters {
+  const raw = store.get<Record<string, unknown>>("filters", {}) ?? {};
+  const minKw = [0, 22, 50, 100].includes(Number(raw.minKw)) ? (Number(raw.minKw) as Filters["minKw"]) : 0;
+  return {
+    freeNow: raw.freeNow === true,
+    dc: raw.dc === true,
+    minKw,
+    operators: Array.isArray(raw.operators) ? raw.operators.filter((o): o is string => typeof o === "string").slice(0, 30) : [],
+    favourites: raw.favourites === true,
+  };
+}
+
 const state = {
   payload: null as ChargersPayload | null,
   mode: null as DataMode | null,
   all: [] as StationVM[],
   byId: new Map<string, StationVM>(),
   filtered: [] as StationVM[],
-  filters: { ...DEFAULT_FILTERS, ...store.get<Partial<Filters>>("filters", {}) } as Filters,
-  favs: new Set<string>(store.get<string[]>("favs", [])),
+  filters: loadFilters(),
+  favs: new Set<string>((store.get<unknown[]>("favs", []) ?? []).filter((x): x is string => typeof x === "string")),
   user: null as LngLat | null,
   selected: null as string | null,
   loading: false,
@@ -162,7 +175,7 @@ function applyPayload(payload: ChargersPayload, mode: DataMode): void {
   refilter();
   updateLive();
   if (state.selected) {
-    if (state.byId.has(state.selected)) renderDetail(state.selected, false);
+    if (state.byId.has(state.selected)) refreshDetail(state.selected);
     else closeDetail();
   }
   if (first) {
@@ -408,16 +421,35 @@ function closeDetail(): void {
   state.selected = null;
   cmap.select(null);
   writeHash(null);
-  withViewTransition(() => {
+  void withViewTransition(() => {
     detailView.hidden = true;
+    detailView.dataset.sig = "";
     listView.hidden = false;
     listView.classList.remove("is-entering");
     void listView.offsetWidth;
     listView.classList.add("is-entering");
     renderList(true);
+  }).then(() => {
+    // Return focus to the station's card for keyboard users.
+    listEl.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
   });
-  // Return focus to the station's card for keyboard users.
-  requestAnimationFrame(() => listEl.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }));
+}
+
+function detailSig(st: StationVM): string {
+  return JSON.stringify(st.points) + (state.favs.has(st.id) ? "*" : "");
+}
+
+/** Re-renders an open detail only when its data changed, preserving the nav menu and focus. */
+function refreshDetail(id: string): void {
+  const st = state.byId.get(id);
+  if (!st || detailView.dataset.sig === detailSig(st)) return;
+  const menuOpen = !detailView.querySelector<HTMLElement>(".nav-menu")?.hidden;
+  const focusAct = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("#view-detail [data-act]")?.dataset.act;
+  const scroll = detailView.scrollTop;
+  renderDetail(id, false);
+  detailView.scrollTop = scroll;
+  if (menuOpen) toggleNavMenu(st);
+  if (focusAct) detailView.querySelector<HTMLElement>(`[data-act="${focusAct}"]`)?.focus({ preventScroll: true });
 }
 
 function renderDetail(id: string, animate: boolean): void {
@@ -430,6 +462,7 @@ function renderDetail(id: string, animate: boolean): void {
   const fav = state.favs.has(id);
   const updated = state.payload ? timeAgo(state.payload.feedUpdated ?? state.payload.fetchedAt) : "";
   const anim = (i: number) => (animate ? `style="--delay:${i * 45}ms"` : `style="animation:none"`);
+  detailView.dataset.sig = detailSig(st);
 
   detailView.innerHTML = `
     <button type="button" class="back" data-act="back">${CHEVRON_LEFT}<span>Nearby</span></button>
@@ -465,7 +498,7 @@ function renderDetail(id: string, animate: boolean): void {
             <span class="group__plug" aria-hidden="true">${g.current === "DC" ? PLUG_DC : PLUG_AC}</span>
             <span class="group__title">
               <b>${escapeHtml(g.label)} · ${formatKw(g.kw)}</b>
-              <small>${g.current || "—"} · ${boltsHtml(Math.min(3, Math.max(0, g.kw === null ? 0 : g.kw < 11 ? 1 : g.kw < 50 ? 2 : 3)))} · ${gFree}/${g.connectors.filter((c) => c.s !== null).length} free${ops.length > 1 ? ` · ${escapeHtml(op.name)}` : ""}</small>
+              <small>${escapeHtml(g.current || "—")} · ${boltsHtml(Math.min(3, Math.max(0, g.kw === null ? 0 : g.kw < 11 ? 1 : g.kw < 50 ? 2 : 3)))} · ${gFree}/${g.connectors.filter((c) => c.s !== null).length} free${ops.length > 1 ? ` · ${escapeHtml(op.name)}` : ""}</small>
             </span>
             <span class="group__price ${pr.kind === "free" ? "is-free" : pr.kind === "na" ? "is-na" : ""}">${escapeHtml(pr.text)}${pr.unit ? `<small>${escapeHtml(pr.unit)}</small>` : ""}</span>
           </div>
@@ -564,8 +597,18 @@ async function share(st: StationVM): Promise<void> {
 
 function readHash(): string | null {
   const m = location.hash.match(/s=([^&]+)/);
-  return m ? decodeURIComponent(m[1]) : null;
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null; // malformed link — ignore rather than break boot
+  }
 }
+window.addEventListener("hashchange", () => {
+  const id = readHash();
+  if (id && id !== state.selected && state.byId.has(id)) openDetail(id, { fly: true });
+  else if (!id && state.selected) closeDetail();
+});
 function writeHash(id: string | null): void {
   const url = new URL(location.href);
   url.hash = id ? `s=${encodeURIComponent(id)}` : "";
@@ -639,9 +682,11 @@ filtersEl.addEventListener("click", (e) => {
 });
 
 let menuEl: HTMLElement | null = null;
+let menuAnchor: string | null = null;
 function closeMenus(): void {
   menuEl?.remove();
   menuEl = null;
+  menuAnchor = null;
 }
 function openMenu(
   anchorEl: HTMLElement,
@@ -651,9 +696,11 @@ function openMenu(
   closeOnPick = true,
 ): void {
   if (menuEl) {
+    const same = menuAnchor === anchorEl.dataset.f;
     closeMenus();
-    return;
+    if (same) return; // tapping the same chip toggles its menu closed
   }
+  menuAnchor = anchorEl.dataset.f ?? null;
   const m = document.createElement("div");
   m.className = "chip-menu";
   m.setAttribute("role", "dialog");
@@ -677,7 +724,9 @@ function openMenu(
       requestAnimationFrame(() => {
         const chip = filtersEl.querySelector<HTMLElement>('[data-f="ops"]');
         if (chip) {
+          menuEl?.remove();
           menuEl = null;
+          menuAnchor = null;
           openMenu(chip, items.map((i) => ({ ...i, checked: vals.includes(i.value) })), kind, onApply, false);
         }
       });
@@ -802,9 +851,14 @@ searchClear.addEventListener("click", () => {
 // ── Location ────────────────────────────────────────────────────────────
 
 let watchId: number | null = null;
-function locate(fly: boolean): void {
+function stopWatch(): void {
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+}
+
+function locate(fly: boolean, silent = false): void {
   if (!("geolocation" in navigator)) {
-    toast("Location isn't available on this device. Search a place instead.");
+    if (!silent) toast("Location isn't available on this device. Search a place instead.");
     return;
   }
   locateBtn.classList.add("is-seeking");
@@ -813,13 +867,16 @@ function locate(fly: boolean): void {
     (pos) => {
       locateBtn.classList.remove("is-seeking");
       locateBtn.classList.add("is-active");
-      state.user = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+      const here = { lng: pos.coords.longitude, lat: pos.coords.latitude };
       store.set("located", true);
-      const inSg = state.user.lat > 1.1 && state.user.lat < 1.5 && state.user.lng > 103.55 && state.user.lng < 104.15;
+      const inSg = here.lat > 1.1 && here.lat < 1.5 && here.lng > 103.55 && here.lng < 104.15;
       if (!inSg) {
-        toast("You seem to be outside Singapore — showing the whole island.");
+        state.user = null; // distances from overseas aren't useful
+        locateBtn.classList.remove("is-active");
+        if (!silent) toast("You seem to be outside Singapore — showing the whole island.");
         return;
       }
+      state.user = here;
       cmap.showUser(state.user, true);
       if (fly) cmap.flyTo([state.user.lng, state.user.lat], 15, sheet.settledHeight + 20, 40);
       if (watchId === null) {
@@ -835,8 +892,10 @@ function locate(fly: boolean): void {
     },
     (err) => {
       locateBtn.classList.remove("is-seeking");
-      if (err.code === err.PERMISSION_DENIED) toast("No worries — search a place or drag the map to explore.");
-      else toast("Couldn't find your location. Try again in a moment.");
+      if (err.code === err.PERMISSION_DENIED) {
+        store.set("located", false);
+        if (!silent) toast("No worries — search a place or drag the map to explore.");
+      } else if (!silent) toast("Couldn't find your location. Try again in a moment.");
     },
     { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 },
   );
@@ -878,6 +937,9 @@ function schedulePoll(): void {
   }, POLL_MS);
 }
 document.addEventListener("visibilitychange", () => {
+  // Don't keep high-accuracy GPS running in the background.
+  if (document.visibilityState === "hidden") stopWatch();
+  else if (state.user && watchId === null) locate(false, true);
   if (document.visibilityState === "visible" && state.payload) {
     const age = Date.now() - Date.parse(state.payload.fetchedAt);
     if (!(age < POLL_MS)) void refresh();
@@ -911,7 +973,7 @@ async function boot(): Promise<void> {
   // Re-locate silently if the user granted permission before.
   try {
     const perm = await navigator.permissions?.query({ name: "geolocation" as PermissionName });
-    if (perm?.state === "granted" || store.get("located", false)) locate(!readHash());
+    if (perm?.state === "granted" || (perm?.state !== "denied" && store.get("located", false))) locate(!readHash(), true);
     else if (!readHash() && !reducedMotion()) {
       // Cinematic intro: settle from the island view into the city with a gentle tilt.
       setTimeout(() => cmap.flyTo(SG_CENTER, 11.3, sheet.settledHeight, 25), 900);

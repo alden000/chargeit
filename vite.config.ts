@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
-// GitHub Pages serves project sites from https://<user>.github.io/<repo>/.
-const base = process.env.GITHUB_PAGES ? "/chargeit/" : "/";
+// Served from the custom domain https://chargeit.wwweeeiii.com/ (root path).
+// Set PAGES_BASE=/chargeit/ only if you ever go back to <user>.github.io/chargeit/.
+const base = process.env.PAGES_BASE || "/";
 
 export default defineConfig({
   base,
@@ -59,14 +60,14 @@ export default defineConfig({
             handler: "StaleWhileRevalidate",
             options: {
               cacheName: "chargeit-map",
-              expiration: { maxEntries: 1500, maxAgeSeconds: 14 * 24 * 3600 },
+              expiration: { maxEntries: 600, maxAgeSeconds: 14 * 24 * 3600, purgeOnQuotaError: true },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
           {
             urlPattern: ({ url }) => url.pathname.endsWith("/demo/chargers.json"),
             handler: "CacheFirst",
-            options: { cacheName: "chargeit-demo", expiration: { maxEntries: 1 } },
+            options: { cacheName: "chargeit-demo", expiration: { maxEntries: 1, maxAgeSeconds: 7 * 24 * 3600 } },
           },
         ],
       },

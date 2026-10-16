@@ -13,7 +13,7 @@ routes = [{ pattern = "chargeit-proxy.1313277.xyz", custom_domain = true }]
 #
 # Optional plain var to override the CORS allow-list (comma-separated):
 # [vars]
-# ALLOWED_ORIGINS = "https://alden000.github.io,http://localhost:5173"
+# ALLOWED_ORIGINS = "https://chargeit.wwweeeiii.com,http://localhost:5173"
 
 [observability]
 enabled = true

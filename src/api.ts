@@ -18,6 +18,52 @@ function isPayload(v: unknown): v is ChargersPayload {
   return !!v && typeof v === "object" && Array.isArray((v as ChargersPayload).stations);
 }
 
+const s = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
+const n = (v: unknown): number | null => {
+  const x = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(x) ? x : null;
+};
+
+/**
+ * Coerces every field to the type the UI expects. Data can come from the
+ * network, Cache Storage or the bundled snapshot; whatever its origin, the
+ * renderer only ever sees well-typed values.
+ */
+export function sanitizePayload(raw: ChargersPayload): ChargersPayload {
+  const stations: ChargersPayload["stations"] = [];
+  for (const st of raw.stations ?? []) {
+    if (!st || typeof st !== "object") continue;
+    const lat = n(st.lat);
+    const lng = n(st.lng);
+    if (lat === null || lng === null) continue;
+    stations.push({
+      id: s(st.id),
+      name: s(st.name),
+      address: s(st.address),
+      postal: s(st.postal),
+      lat,
+      lng,
+      points: (Array.isArray(st.points) ? st.points : []).map((pt) => ({
+        operator: s(pt?.operator),
+        position: s(pt?.position),
+        hours: s(pt?.hours),
+        plugs: (Array.isArray(pt?.plugs) ? pt.plugs : []).map((pl) => ({
+          type: s(pl?.type),
+          current: pl?.current === "AC" || pl?.current === "DC" ? pl.current : "",
+          kw: n(pl?.kw),
+          price: n(pl?.price),
+          priceType: s(pl?.priceType),
+          connectors: (Array.isArray(pl?.connectors) ? pl.connectors : []).map((c) => ({
+            id: s(c?.id),
+            s: c?.s === 1 || c?.s === 0 ? c.s : null,
+          })),
+        })),
+      })),
+    });
+  }
+  return { v: 1, feedUpdated: raw.feedUpdated ? s(raw.feedUpdated) : null, fetchedAt: s(raw.fetchedAt), stations };
+}
+
 async function fetchJson(url: string, timeout = TIMEOUT_MS): Promise<{ data: unknown; res: Response }> {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeout);
@@ -59,10 +105,10 @@ export async function loadChargers(): Promise<LoadResult> {
     const { data, res } = await fetchJson(`${API_BASE}/v1/chargers`);
     if (!isPayload(data)) throw new Error("Malformed payload");
     void saveLastGood(data);
-    return { payload: data, mode: res.headers.get("X-Stale") === "1" ? "stale" : "live" };
+    return { payload: sanitizePayload(data), mode: res.headers.get("X-Stale") === "1" ? "stale" : "live" };
   } catch (err) {
     const last = await readLastGood();
-    if (last) return { payload: last, mode: "offline" };
+    if (last) return { payload: sanitizePayload(last), mode: "offline" };
     throw err;
   }
 }
@@ -71,7 +117,7 @@ export async function loadChargers(): Promise<LoadResult> {
 export async function loadDemo(): Promise<LoadResult> {
   const { data } = await fetchJson(`${import.meta.env.BASE_URL}demo/chargers.json`, 30_000);
   if (!isPayload(data)) throw new Error("Malformed demo payload");
-  return { payload: data, mode: "demo" };
+  return { payload: sanitizePayload(data), mode: "demo" };
 }
 
 // ── OneMap place search (Singapore Land Authority, keyless, CORS *) ─────

@@ -190,3 +190,28 @@ test.describe("geolocation", () => {
     await expect(page.locator(".card .card__name").first()).toContainText("Clarke Quay");
   });
 });
+
+test.describe("hardening (QA regressions)", () => {
+  test("a malformed deep link is ignored and the app still reports Live", async ({ page, api: _ }) => {
+    await page.goto("/#s=%E0%A4%A");
+    await ready(page);
+    await expect(page.locator("#live")).toHaveAttribute("data-state", "live");
+  });
+
+  test("a shared link opened in an already-open tab navigates to the station", async ({ page, api: _ }) => {
+    await page.goto("/");
+    await ready(page);
+    await page.evaluate((id) => (location.hash = `s=${encodeURIComponent(id)}`), clarke.id);
+    await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+  });
+
+  test("poisoned saved filters can't inject markup", async ({ page, api: _ }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("chargeit:filters", JSON.stringify({ minKw: '<img src=x onerror="window.__pwned=1">', operators: [{ x: 1 }, "Shell Recharge"] }));
+    });
+    await page.goto("/");
+    await expect(page.locator("#splash")).toHaveCount(0, { timeout: 8_000 });
+    await expect(page.locator('[data-f="speed"]')).toContainText("Any speed");
+    expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+  });
+});

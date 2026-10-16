@@ -23,7 +23,11 @@ function str(v: unknown): string {
 
 function num(v: unknown): number | null {
   if (v === undefined || v === null || v === "") return null;
-  const n = typeof v === "number" ? v : parseFloat(String(v).replace(/[^0-9.+-]/g, ""));
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  // Take the first number; for ranges like "7.4 / 22" use the highest, never glue digits together.
+  const all = String(v).match(/\d+(?:\.\d+)?|\.\d+/g);
+  if (!all) return null;
+  const n = Math.max(...all.map(Number));
   return Number.isFinite(n) ? n : null;
 }
 
@@ -66,11 +70,10 @@ export function hashId(s: string): string {
 export function toIsoSgt(v: unknown): string | null {
   const s = str(v);
   if (!s) return null;
-  const m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)(.*)$/);
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)(\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?$/i);
   if (m) {
-    const zone = m[3].trim();
     const time = m[2].length === 5 ? `${m[2]}:00` : m[2];
-    const iso = `${m[1]}T${time}${zone ? zone : "+08:00"}`;
+    const iso = `${m[1]}T${time}${m[3] ?? ""}${m[4] ?? "+08:00"}`;
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
@@ -161,7 +164,11 @@ export function normalizeBatch(raw: unknown, fetchedAt: Date = new Date()): Char
     if (!points.length) continue;
     const name = str(pick(st, "name"));
     const postal = str(pick(st, "postalCode", "postal"));
-    let id = str(pick(st, "locationId")) || `${postal || "x"}-${hashId(`${name}|${lat.toFixed(5)}|${lng.toFixed(5)}`)}`;
+    // Stable across feed refreshes so favourites and shared links survive:
+    // LTA's locationId when present, else postal code + location (~10 m), and
+    // the name only to separate distinct sites at the same spot.
+    let id = str(pick(st, "locationId")) || `${postal || "x"}-${hashId(`${lat.toFixed(4)}|${lng.toFixed(4)}`)}`;
+    if (ids.has(id)) id = `${id}-${hashId(name)}`;
     const n = ids.get(id) ?? 0;
     ids.set(id, n + 1);
     if (n) id = `${id}-${n}`;

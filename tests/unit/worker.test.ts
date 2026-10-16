@@ -34,7 +34,7 @@ const waits: Promise<unknown>[] = [];
 const ctx = { waitUntil: (p: Promise<unknown>) => waits.push(p), passThroughOnException() {}, props: {} } as unknown as ExecutionContext;
 const env: Env = { LTA_ACCOUNT_KEY: KEY };
 
-function req(path: string, origin = "https://alden000.github.io", method = "GET") {
+function req(path: string, origin = "https://chargeit.wwweeeiii.com", method = "GET") {
   return new Request(`https://chargeit-proxy.example${path}`, { method, headers: origin ? { Origin: origin } : {} });
 }
 
@@ -63,7 +63,7 @@ describe("worker /v1/chargers", () => {
   it("does the two-step EVCBatch fetch and returns the normalised payload with CORS", async () => {
     const res = await worker.fetch(req("/v1/chargers"), env, ctx);
     expect(res.status).toBe(200);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://alden000.github.io");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://chargeit.wwweeeiii.com");
     expect(res.headers.get("X-Stale")).toBe("0");
     const body = (await res.json()) as { stations: unknown[]; feedUpdated: string };
     expect(body.stations).toHaveLength(1);
@@ -140,9 +140,37 @@ describe("worker /v1/chargers", () => {
   });
 });
 
+describe("worker resilience (QA #2, #3)", () => {
+  it("gives up on a hung LTA within the deadline and serves the last good copy", async () => {
+    await worker.fetch(req("/v1/chargers"), env, ctx);
+    await Promise.all(waits);
+    __resetForTests();
+    cache.store.delete("https://chargeit-cache.internal/v1/chargers/fresh");
+    vi.useFakeTimers();
+    // Headers arrive, but the body never does.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ start() {} }))));
+    const pending = worker.fetch(req("/v1/chargers"), env, ctx);
+    await vi.advanceTimersByTimeAsync(8_100);
+    vi.useRealTimers();
+    const res = await pending;
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Stale")).toBe("1");
+  });
+
+  it("backs off after a failure instead of hitting LTA on every request", async () => {
+    const down = vi.fn(async () => new Response("down", { status: 500 }));
+    vi.stubGlobal("fetch", down);
+    expect((await worker.fetch(req("/v1/chargers"), env, ctx)).status).toBe(503);
+    const calls = down.mock.calls.length;
+    expect((await worker.fetch(req("/v1/chargers"), env, ctx)).status).toBe(503);
+    expect((await worker.fetch(req("/v1/chargers"), env, ctx)).status).toBe(503);
+    expect(down.mock.calls.length).toBe(calls);
+  });
+});
+
 describe("worker misc routes", () => {
   it("answers CORS preflight", async () => {
-    const res = await worker.fetch(req("/v1/chargers", "https://alden000.github.io", "OPTIONS"), env, ctx);
+    const res = await worker.fetch(req("/v1/chargers", "https://chargeit.wwweeeiii.com", "OPTIONS"), env, ctx);
     expect(res.status).toBe(204);
     expect(res.headers.get("Access-Control-Allow-Methods")).toContain("GET");
   });
