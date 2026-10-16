@@ -65,7 +65,7 @@ const OPERATORS: Array<[RegExp, string, string, string, string]> = [
   [/wes\s*cares/i, "WES Cares Energy", "WE", "#2B8A3E", "wescares"],
   [/union\s*gas/i, "Union Gas", "UG", "#D52B1E", "uniongas"],
   [/\bg\.?\s*tech\b/i, "G. Tech", "GT", "#4A5568", "gtech"],
-  [/eneready/i, "EneReady", "ER", "#0091D5", "eneready"],
+  [/eneready/i, "ENEReady", "ER", "#0091D5", "eneready"],
   [/^electric\b/i, "Electric", "EL", "#5B48C9", "electric"],
   [/iwow/i, "IWOW", "IW", "#00A0E9", "iwow"],
   [/p-?parking/i, "P-Parking", "PP", "#E30613", "pparking"],
