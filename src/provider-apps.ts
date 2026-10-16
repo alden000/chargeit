@@ -38,7 +38,8 @@ export const PROVIDER_APPS: Readonly<Record<string, ProviderApp>> = {
   uniongas: { name: "Union Charge", ios: IOS("union-charge/id6761822514"), android: PLAY("com.lumicharging.unioncharge") },
   eneready: { name: "ENEReady", ios: IOS("eneready/id1612599603"), android: PLAY("com.eneready.ener") },
   iwow: { name: "iCharge.SG", ios: IOS("icharge-sg/id6743070284"), note: "iPhone only" },
-  eigen: { note: "Pay by card or QR at the charger" },
+  // Kigo: Eigen's own site presents it as its roaming app; the Kigo user guide routes support to Eigen and links both listings.
+  eigen: { name: "Kigo", ios: IOS("kigo-app/id1616117249"), android: PLAY("app.kigo.customer"), note: "or card / QR at the charger" },
 };
 
 const STORE_HOSTS = new Set(["apps.apple.com", "play.google.com"]);
