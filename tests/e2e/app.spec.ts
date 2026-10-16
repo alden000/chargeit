@@ -291,8 +291,8 @@ test("map pins show the provider; filtering a provider puts its logo on the pins
   await page.getByRole("button", { name: "Close" }).click();
   // Zoomed in on a station: individual pins carry a provider badge and name it for screen readers.
   await expect(page.locator(".pin-host .pin__op").first()).toBeVisible();
-  await expect(page.locator('.pin-host[aria-label*="Clarke Quay, SP Mobility"]')).toHaveCount(1);
-  await expect(page.locator('.pin-host[aria-label*="Clarke Quay"] .pin__op img')).toHaveAttribute("src", /providers\/sp\.png$/);
+  await expect(page.locator('.pin-host[aria-label^="Clarke Quay, SP Mobility"]')).toHaveCount(1);
+  await expect(page.locator('.pin-host[aria-label^="Clarke Quay, "] .pin__op img')).toHaveAttribute("src", /providers\/sp\.png$/);
 
   await page.locator('[data-f="ops"]').click();
   await page.getByLabel(/^Shell Recharge/).check();
