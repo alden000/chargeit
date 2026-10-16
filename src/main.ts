@@ -84,6 +84,7 @@ const state = {
   byId: new Map<string, StationVM>(),
   filtered: [] as StationVM[],
   filters: loadFilters(),
+  highlightMine: store.get<unknown>("highlightMine", true) !== false,
   discounts: sanitizeDiscounts(store.get<unknown>("discounts", {})) as Record<string, number>,
   favs: new Set<string>((store.get<unknown[]>("favs", []) ?? []).filter((x): x is string => typeof x === "string")),
   user: null as LngLat | null,
@@ -290,8 +291,14 @@ function updateLive(): void {
 
 function refilter(): void {
   state.filtered = state.all.filter((s) => matchesFilters(s, state.filters, state.favs));
-  const prefer = state.filters.operators;
-  cmap.setStations(state.filtered, (s) => primaryOperator(s, prefer));
+  // Badge preference: providers the user filtered for, then the ones they have a discount with.
+  const mineNames = Object.keys(state.discounts);
+  const prefer = [...state.filters.operators, ...mineNames];
+  const highlight = mineNames.length > 0 && state.highlightMine;
+  cmap.setStations(state.filtered, {
+    providerOf: (s) => primaryOperator(s, prefer),
+    isMine: highlight ? (s) => s.sum.operators.some((o) => mineNames.includes(operatorInfo(o).name)) : null,
+  });
   renderFilters();
   renderList();
 }
@@ -1056,7 +1063,8 @@ function setDiscount(name: string, pct: number): void {
   store.set("discounts", next);
   haptic(8);
   $("#settings-dot").hidden = !Object.keys(next).length;
-  // Re-price everything on screen.
+  // Re-price everything on screen and re-highlight the map.
+  refilter();
   renderList(true);
   if (state.selected) refreshDetail(state.selected);
 }
@@ -1094,8 +1102,17 @@ discountList.addEventListener("change", (e) => {
   discountList.querySelector<HTMLElement>(`.disc.is-open input`)?.focus({ preventScroll: true });
 });
 
+const highlightToggle = $<HTMLInputElement>("#highlight-mine");
+highlightToggle.addEventListener("change", () => {
+  state.highlightMine = highlightToggle.checked;
+  store.set("highlightMine", state.highlightMine);
+  haptic(6);
+  refilter();
+});
+
 function openSettings(): void {
   closeMenus();
+  highlightToggle.checked = state.highlightMine;
   renderDiscounts();
   renderThemeChoice();
   settingsEl.showModal();

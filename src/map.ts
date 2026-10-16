@@ -239,6 +239,7 @@ export class ChargeMap {
           busy: ["+", ["get", "busy"]],
           offline: ["+", ["get", "offline"]],
           dc: ["max", ["get", "dc"]],
+          mine: ["max", ["get", "mine"]],
         },
       });
       // Invisible layer: keeps the source's tiles loaded so querySourceFeatures works.
@@ -254,16 +255,27 @@ export class ChargeMap {
       features: this.stations.map((s) => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [s.lng, s.lat] },
-        properties: { id: s.id, free: s.sum.free, busy: s.sum.busy, offline: s.sum.offline, dc: s.sum.hasDC ? 1 : 0 },
+        properties: { id: s.id, free: s.sum.free, busy: s.sum.busy, offline: s.sum.offline, dc: s.sum.hasDC ? 1 : 0, mine: this.isMine(s) ? 1 : 0 },
       })),
     };
   }
 
   private providerOf: (s: StationVM) => { op: Operator; others: number } = () => ({ op: { key: "", name: "", short: "?", color: "", slug: null, logo: null }, others: 0 });
 
-  /** `providerOf` picks the provider badge shown on each station pin. */
-  setStations(stations: StationVM[], providerOf?: (s: StationVM) => { op: Operator; others: number }): void {
-    if (providerOf) this.providerOf = providerOf;
+  /** Stations run by one of "my" providers (null = highlighting off). */
+  private isMine: (s: StationVM) => boolean = () => false;
+  private highlighting = false;
+
+  /**
+   * `providerOf` picks the provider badge shown on each station pin; `isMine`
+   * (when given) highlights stations run by the user's providers and fades the rest.
+   */
+  setStations(stations: StationVM[], opts: { providerOf?: (s: StationVM) => { op: Operator; others: number }; isMine?: ((s: StationVM) => boolean) | null } = {}): void {
+    if (opts.providerOf) this.providerOf = opts.providerOf;
+    if (opts.isMine !== undefined) {
+      this.highlighting = opts.isMine !== null;
+      this.isMine = opts.isMine ?? (() => false);
+    }
     this.stations = stations;
     this.byId = new Map(stations.map((s) => [s.id, s]));
     const src = this.map.getSource(SOURCE) as GeoJSONSource | undefined;
@@ -299,7 +311,8 @@ export class ChargeMap {
       const busy = Number(p.busy) || 0;
       const offline = Number(p.offline) || 0;
       const st = isCluster ? undefined : this.byId.get(String(p.id));
-      const sig = `${free}/${busy}/${offline}${st ? `/${this.providerOf(st).op.name}` : ""}`;
+      const mine = Number(p.mine) === 1;
+      const sig = `${free}/${busy}/${offline}/${this.highlighting ? (mine ? "M" : "d") : "-"}${st ? `/${this.providerOf(st).op.name}` : ""}`;
       let entry = this.markers.get(key);
       if (!entry) {
         const el = document.createElement("div");
@@ -334,6 +347,9 @@ export class ChargeMap {
         const ticked = entry.sig !== "";
         entry.sig = sig;
         this.renderPin(entry.el, isCluster, { free, busy, offline, dc: Number(p.dc) === 1, count: Number(p.point_count) || 0, id: String(p.id ?? "") });
+        const pinEl = entry.el.firstElementChild;
+        pinEl?.classList.toggle("is-mine", this.highlighting && mine);
+        pinEl?.classList.toggle("is-dim", this.highlighting && !mine);
         if (ticked) {
           const pin = entry.el.firstElementChild as HTMLElement | null;
           pin?.classList.add("is-tick");

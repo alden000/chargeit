@@ -842,6 +842,27 @@ svg {
 .pin--offline .pin__op {
   filter: grayscale(1);
 }
+/* "My providers" (discounted) highlighting */
+.pin.is-mine .pin__op {
+  box-shadow: 0 0 0 2px var(--volt), 0 0 12px 2px color-mix(in srgb, var(--volt) 70%, transparent);
+}
+.pin.is-mine.pin--cluster .pin__core {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--volt) 55%, transparent);
+}
+.pin.is-dim {
+  opacity: 0.38;
+  filter: saturate(0.4);
+}
+.pin.is-dim::before {
+  display: none; /* no breathing glow on faded pins */
+}
+.pin.is-dim.is-selected {
+  opacity: 1;
+  filter: none;
+}
+.pin-host:has(.pin.is-mine) {
+  z-index: 2; /* mine draw above faded neighbours */
+}
 .pin.is-selected {
   transform: scale(1.35);
   z-index: 5;
@@ -2094,4 +2115,69 @@ svg {
     opacity: 0;
     transform: translate(-50%, -46%) scale(0.97);
   }
+}
+
+/* Settings switch */
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--ink-800);
+  cursor: pointer;
+}
+.switch > span {
+  flex: 1;
+  min-width: 0;
+}
+.switch b {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.switch small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.switch input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  position: relative;
+  width: 48px;
+  height: 28px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--ink-700);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 200ms;
+}
+.switch input::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 260ms var(--ease-spring);
+}
+.switch input:checked {
+  background: var(--volt);
+  border-color: transparent;
+}
+.switch input:checked::after {
+  transform: translateX(20px);
+}
+.switch input:focus-visible {
+  outline: 2px solid var(--volt);
+  outline-offset: 2px;
 }

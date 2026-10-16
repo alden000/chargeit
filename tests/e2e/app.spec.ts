@@ -302,3 +302,30 @@ test("map pins show the provider; filtering a provider puts its logo on the pins
     return srcs.length > 0 && srcs.every((s) => s?.endsWith("providers/shell.png"));
   }).toBe(true);
 });
+
+test("discounted providers are highlighted on the map, others fade; the switch turns it off", async ({ page, api: _ }) => {
+  await page.addInitScript(() => localStorage.setItem("chargeit:discounts", JSON.stringify({ "SP Mobility": 15 })));
+  await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+  await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+  await page.getByRole("button", { name: "Close" }).click();
+  // Clarke Quay is SP: highlighted with SP's badge.
+  const clarkePin = page.locator('.pin-host[aria-label^="Clarke Quay, "] .pin');
+  await expect(clarkePin).toHaveClass(/is-mine/);
+  await expect(clarkePin.locator(".pin__op img")).toHaveAttribute("src", /providers\/sp\.png$/);
+  await expect(page.locator(".pin.is-dim").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("switch", { name: /Highlight my providers/ }).uncheck();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".pin.is-mine, .pin.is-dim")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator(".pin-host .pin").first()).toBeVisible();
+  await expect(page.locator(".pin.is-mine, .pin.is-dim")).toHaveCount(0);
+});
+
+test("no discounts means no highlighting", async ({ page, api: _ }) => {
+  await page.goto("/");
+  await ready(page);
+  await expect(page.locator(".pin-host .pin").first()).toBeVisible();
+  await expect(page.locator(".pin.is-mine, .pin.is-dim")).toHaveCount(0);
+});
