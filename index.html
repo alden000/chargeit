@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>ChargeIt — Find a free EV charger near you</title>
+    <meta name="description" content="Realtime EV charging points across Singapore: live availability, charging speed, provider and price." />
+    <meta name="theme-color" content="#070B16" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F4F7FB" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ChargeIt" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <script>
+      // Apply the saved theme before first paint to avoid a flash.
+      try {
+        var t = localStorage.getItem("chargeit:theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="splash" class="splash" aria-hidden="true">
+      <div class="splash__mark">
+        <svg viewBox="0 0 512 512" class="splash__svg">
+          <defs>
+            <linearGradient id="sp-fill" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#00B48C" />
+              <stop offset="1" stop-color="#5BFFD6" />
+            </linearGradient>
+            <clipPath id="sp-clip"><rect class="splash__level" x="0" y="0" width="512" height="512" /></clipPath>
+            <mask id="sp-cut">
+              <rect width="512" height="512" fill="#fff" />
+              <path d="M284 112 190 246h62l-22 108 98-142h-62l18-100z" fill="#000" />
+            </mask>
+          </defs>
+          <path class="splash__outline" pathLength="1" d="M256 446c-18-26-150-158-150-226a150 150 0 0 1 300 0c0 68-132 200-150 226z" />
+          <g clip-path="url(#sp-clip)">
+            <path mask="url(#sp-cut)" fill="url(#sp-fill)" d="M256 446c-18-26-150-158-150-226a150 150 0 0 1 300 0c0 68-132 200-150 226z" />
+          </g>
+          <circle class="splash__spark" cx="392" cy="104" r="26" />
+        </svg>
+      </div>
+      <div class="splash__word">Charge<span>It</span></div>
+      <div class="splash__tag">Find your spark</div>
+    </div>
+
+    <div id="app" class="app">
+      <div id="map" class="map" role="application" aria-label="Map of EV charging points"></div>
+      <div class="map-vignette" aria-hidden="true"></div>
+
+      <header class="topbar">
+        <div class="topbar__row">
+          <a class="brand" href="./" aria-label="ChargeIt home">
+            <img src="logo.svg" alt="" width="28" height="28" />
+            <span class="brand__word">Charge<span>It</span></span>
+          </a>
+          <button id="live" class="live" type="button" aria-live="polite" title="Refresh now">
+            <span class="live__dot"></span><span class="live__text">Connecting…</span>
+          </button>
+          <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle light or dark theme">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path class="i-moon" d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" /><g class="i-sun"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></g></svg>
+          </button>
+        </div>
+        <div class="search" role="search">
+          <svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input id="search" type="search" inputmode="search" autocomplete="off" enterkeyhint="search" placeholder="Search place, postal code or charger" aria-label="Search" aria-controls="search-results" aria-expanded="false" role="combobox" />
+          <button id="search-clear" class="search__clear" type="button" aria-label="Clear search" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+          </button>
+          <ul id="search-results" class="search__results" role="listbox" hidden></ul>
+        </div>
+        <div id="filters" class="chips" role="toolbar" aria-label="Filters"></div>
+        <div class="current-line" aria-hidden="true"></div>
+      </header>
+
+      <div class="fabs">
+        <button id="locate" class="fab" type="button" aria-label="Show my location">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><circle cx="12" cy="12" r="7.5" /><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3" /></svg>
+        </button>
+      </div>
+
+      <section id="sheet" class="sheet" aria-label="Charging points" data-snap="peek">
+        <div class="sheet__grip" aria-hidden="true"><span></span></div>
+        <div id="sheet-views" class="sheet__views">
+          <div id="view-list" class="view view--list">
+            <div class="sheet__head">
+              <div>
+                <h2 id="list-title" class="sheet__title">Nearby</h2>
+                <p id="list-sub" class="sheet__sub">Loading chargers…</p>
+              </div>
+              <div id="list-stats" class="stats" aria-hidden="true"></div>
+            </div>
+            <ol id="list" class="list" aria-labelledby="list-title"></ol>
+          </div>
+          <div id="view-detail" class="view view--detail" hidden></div>
+        </div>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    </div>
+    <noscript>ChargeIt needs JavaScript to show live charging points.</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

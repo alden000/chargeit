@@ -1,0 +1,41 @@
+name: Deploy Cloudflare Worker
+
+# Optional automation. The LTA key is NOT used here — it lives only in
+# Cloudflare as the Worker secret LTA_ACCOUNT_KEY. This workflow only needs a
+# Cloudflare API token allowed to edit Workers, and skips itself without one.
+
+on:
+  push:
+    branches:
+      - main
+      - claude/chargeit-ev-locator-pwa-37iuvu
+    paths:
+      - worker/**
+      - shared/**
+      - .github/workflows/deploy-worker.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Skip when no Cloudflare token is configured
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping Worker deploy (deploy manually with 'npx wrangler deploy')."
+      - uses: actions/checkout@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+      - uses: actions/setup-node@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci && npm run typecheck && npx wrangler deploy
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        working-directory: worker

@@ -1,0 +1,9 @@
+node_modules
+dist
+dev-dist
+.env*.local
+.dev.vars
+.wrangler
+test-results
+playwright-report
+*.log

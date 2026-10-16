@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ChargeIt">
+  <defs>
+    <linearGradient id="ci-pin" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#5BFFD6"/>
+      <stop offset="0.55" stop-color="#1CE8B5"/>
+      <stop offset="1" stop-color="#00B48C"/>
+    </linearGradient>
+    <mask id="ci-cut">
+      <rect width="512" height="512" fill="#fff"/>
+      <path d="M284 112 190 246h62l-22 108 98-142h-62l18-100z" fill="#000"/>
+    </mask>
+  </defs>
+  <path mask="url(#ci-cut)" fill="url(#ci-pin)" d="M256 446c-18-26-150-158-150-226a150 150 0 0 1 300 0c0 68-132 200-150 226z"/>
+  <circle cx="392" cy="104" r="26" fill="#FF4F7B"/>
+</svg>

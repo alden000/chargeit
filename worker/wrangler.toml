@@ -1,0 +1,19 @@
+name = "chargeit-lta-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# Custom domain on the same Cloudflare zone the WhereIsTheBus proxy uses.
+# `wrangler deploy` creates the DNS record + certificate automatically.
+# The frontend defaults to this URL; override with the API_BASE repo variable.
+routes = [{ pattern = "chargeit-proxy.1313277.xyz", custom_domain = true }]
+
+# Secrets (set in Cloudflare, never committed):
+#   npx wrangler secret put LTA_ACCOUNT_KEY
+#
+# Optional plain var to override the CORS allow-list (comma-separated):
+# [vars]
+# ALLOWED_ORIGINS = "https://alden000.github.io,http://localhost:5173"
+
+[observability]
+enabled = true

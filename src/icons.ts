@@ -1,0 +1,11 @@
+export const BOLT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2 5 13.5h6L9.8 22 19 9.8h-6.2L13.5 2z"/></svg>`;
+export const PIN = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>`;
+export const CHEVRON_LEFT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>`;
+export const STAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5z"/></svg>`;
+export const SHARE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>`;
+export const NAV = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 21 3l-8 18-2-8-8-2z"/></svg>`;
+export const CLOSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`;
+export const CARET = `<svg class="caret" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 4l3 3 3-3"/></svg>`;
+export const SEARCH_EMPTY = `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="21" cy="21" r="12"/><path d="m30 30 10 10M16 21h10"/></svg>`;
+export const PLUG_AC = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="10" r="1.3"/><circle cx="15.5" cy="10" r="1.3"/><circle cx="12" cy="8" r="1.3"/><circle cx="9.5" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg>`;
+export const PLUG_DC = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9" r="6.5"/><circle cx="9.5" cy="8" r="1.2"/><circle cx="14.5" cy="8" r="1.2"/><circle cx="12" cy="11" r="1.2"/><rect x="6" y="17" width="12" height="5" rx="2.5"/><circle cx="9.5" cy="19.5" r="1.1"/><circle cx="14.5" cy="19.5" r="1.1"/></svg>`;
