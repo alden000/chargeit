@@ -8,7 +8,6 @@ on:
   push:
     branches:
       - main
-      - claude/chargeit-ev-locator-pwa-37iuvu
     paths:
       - worker/**
       - shared/**
@@ -28,9 +27,9 @@ jobs:
       - name: Skip when no Cloudflare token is configured
         if: env.CLOUDFLARE_API_TOKEN == ''
         run: echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping Worker deploy (deploy manually with 'npx wrangler deploy')."
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: env.CLOUDFLARE_API_TOKEN != ''
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: env.CLOUDFLARE_API_TOKEN != ''
         with:
           node-version: 22
