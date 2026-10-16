@@ -1167,6 +1167,34 @@ svg {
   align-items: flex-end;
   gap: 4px;
 }
+.card__price {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--volt);
+  white-space: nowrap;
+}
+.card__price small {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--muted);
+}
+.card__price.is-free {
+  color: var(--volt);
+}
+.card__price.is-na {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.card__dist--sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
 .card__dist {
   font-family: var(--font-display);
   font-weight: 600;

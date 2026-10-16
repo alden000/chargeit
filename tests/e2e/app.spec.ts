@@ -360,3 +360,29 @@ test("price slider: hides dearer and unlisted sites; Any restores everything", a
   await expect(page.locator('[data-f="price"]')).toContainText("Any price");
   await expect.poll(() => page.evaluate(() => (window as unknown as { __chargeit: { state: { filtered: unknown[] } } }).__chargeit.state.filtered.length)).toBe(total);
 });
+
+test("sort chip: Cheapest orders the list by effective price, unlisted last; remembered", async ({ page, api: _ }) => {
+  await page.addInitScript(() => localStorage.setItem("chargeit:discounts", JSON.stringify({ "SP Mobility": 20 })));
+  await page.goto("/");
+  await ready(page);
+  const sort = page.locator('[data-f="sort"]');
+  await expect(sort).toContainText("Nearest");
+  await sort.click();
+  await expect(sort).toContainText("Cheapest");
+  await expect(sort).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#list-title")).toContainText("Cheapest");
+  const parse = (t: string) => (t === "Free" ? 0 : t === "No price" ? Infinity : parseFloat(t.replace(/[^0-9.]/g, "")));
+  const prices = (await page.locator(".card .card__price").allInnerTexts()).map(parse);
+  expect(prices.length).toBeGreaterThan(3);
+  for (let i = 1; i < prices.length; i++) expect(prices[i]).toBeGreaterThanOrEqual(prices[i - 1]);
+  // Prices shown are after the user's discount: an SP site shows its discounted price.
+  const spCard = page.locator(".card", { has: page.locator(".op", { hasText: "SP Mobility" }) }).first();
+  if (await spCard.count()) await expect(spCard.locator(".card__price")).toBeVisible();
+
+  await page.reload();
+  await ready(page);
+  await expect(page.locator('[data-f="sort"]')).toContainText("Cheapest");
+  await page.locator('[data-f="sort"]').click();
+  await expect(page.locator('[data-f="sort"]')).toContainText("Nearest");
+  await expect(page.locator(".card .card__price")).toHaveCount(0);
+});

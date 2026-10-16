@@ -40,6 +40,7 @@ import { PROVIDER_APPS, detectPlatform, storeLinks } from "./provider-apps.ts";
 import type { ChargersPayload } from "../shared/schema.ts";
 
 const POLL_MS = 60_000;
+const SORT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round"><path d="M7 4v16M3.5 16.5 7 20l3.5-3.5M17 20V4M13.5 7.5 17 4l3.5 3.5"/></svg>`;
 const LIST_LIMIT = 50;
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -87,6 +88,7 @@ const state = {
   filtered: [] as StationVM[],
   filters: loadFilters(),
   highlightMine: store.get<unknown>("highlightMine", true) !== false,
+  sort: (store.get<unknown>("sort", "near") === "cheap" ? "cheap" : "near") as "near" | "cheap",
   discounts: sanitizeDiscounts(store.get<unknown>("discounts", {})) as Record<string, number>,
   favs: new Set<string>((store.get<unknown[]>("favs", []) ?? []).filter((x): x is string => typeof x === "string")),
   user: null as LngLat | null,
@@ -323,9 +325,11 @@ function renderList(force = false): void {
   const visible = cmap.visibleIds();
   const inView = state.filtered.filter((s) => visible.has(s.id));
   const pool = inView.length ? inView : state.filtered;
+  const cheap = state.sort === "cheap";
   const sorted = pool
-    .map((s) => ({ s, d: distanceM(a, s) }))
-    .sort((x, y) => x.d - y.d)
+    .map((s) => ({ s, d: distanceM(a, s), p: cheap ? bestKwhPrice(s, state.discounts) : null }))
+    // Cheapest: by what the user pays per kWh (free first), unlisted last, ties by distance.
+    .sort((x, y) => (cheap ? (x.p ?? Infinity) - (y.p ?? Infinity) || x.d - y.d : x.d - y.d))
     .slice(0, LIST_LIMIT);
 
   // Stats for what's on screen.
@@ -339,14 +343,14 @@ function renderList(force = false): void {
   countTo(statsEl.querySelector<HTMLElement>(".s-busy b")!, busy);
 
   const near = state.user && a === state.user;
-  $("#list-title").textContent = state.filters.favourites ? "Favourites" : near ? "Near you" : "In this area";
+  $("#list-title").textContent = state.filters.favourites ? "Favourites" : cheap ? (near ? "Cheapest near you" : "Cheapest here") : near ? "Near you" : "In this area";
   $("#list-sub").textContent = inView.length
     ? `${inView.length} site${inView.length === 1 ? "" : "s"} on the map${activeFilterCount() ? " · filtered" : ""}`
     : state.filtered.length
       ? "Nothing on screen — showing the closest"
       : "No matches";
 
-  const sig = `${sorted.map((x) => `${x.s.id}:${x.s.sum.free}:${x.s.sum.busy}`).join(",")}|${state.favs.size}|${JSON.stringify(state.discounts)}`;
+  const sig = `${state.sort}|${sorted.map((x) => `${x.s.id}:${x.s.sum.free}:${x.s.sum.busy}`).join(",")}|${state.favs.size}|${JSON.stringify(state.discounts)}`;
   if (sig === listSig && !force) {
     // Same stations, same order: just refresh distances in place.
     sorted.forEach(({ s, d }) => {
@@ -369,7 +373,7 @@ function renderList(force = false): void {
   }
 
   listEl.innerHTML = sorted
-    .map(({ s, d }, i) => {
+    .map(({ s, d, p }, i) => {
       // Lead with the provider the user filtered for, if any.
       const ops = s.sum.operators.map(operatorInfo);
       const op = ops.find((o) => state.filters.operators.includes(o.name)) ?? ops[0] ?? operatorInfo("");
@@ -391,12 +395,15 @@ function renderList(force = false): void {
             <span class="avail avail--${s.sum.state}">${availabilityText(s.sum)}</span>
             <span>${formatKw(s.sum.maxKw)}${s.sum.hasDC ? " DC" : ""}</span>
             <span class="op">${opBadge(op)}${escapeHtml(op.name)}${more}</span>
-            ${price}
+            ${cheap ? "" : price /* in Cheapest mode the price is shown large on the right */}
           </span>
         </span>
         <span class="card__side">
-          <span class="card__dist">${formatDistance(d)}</span>
-          ${boltsHtml(s.sum.tier)}
+          ${
+            cheap
+              ? `<span class="card__price${p === 0 ? " is-free" : p === null ? " is-na" : ""}">${p === null ? "No price" : p === 0 ? "Free" : `${money(p)}<small>/kWh</small>`}</span><span class="card__dist card__dist--sub">${formatDistance(d)}</span>`
+              : `<span class="card__dist">${formatDistance(d)}</span>${boltsHtml(s.sum.tier)}`
+          }
         </span>
       </button></li>`;
     })
@@ -703,6 +710,7 @@ function renderFilters(): void {
     `<button type="button" class="chip" data-f="dc" aria-pressed="${f.dc}">${BOLT}<span>DC fast</span></button>`,
     `<button type="button" class="chip" data-f="speed" aria-pressed="${f.minKw > 0}" aria-haspopup="true"><span>${speedLabel}</span>${CARET}</button>`,
     `<button type="button" class="chip" data-f="price" aria-pressed="${f.maxPrice !== null}" aria-haspopup="dialog"><span>${f.maxPrice === null ? "Any price" : f.maxPrice === 0 ? "Free only" : `≤ ${money(f.maxPrice)}`}</span>${CARET}</button>`,
+    `<button type="button" class="chip chip--sort" data-f="sort" aria-pressed="${state.sort === "cheap"}" aria-label="Sort list: ${state.sort === "cheap" ? "cheapest first" : "nearest first"}">${SORT_ICON}<span>${state.sort === "cheap" ? "Cheapest" : "Nearest"}</span></button>`,
     `<button type="button" class="chip" data-f="ops" aria-pressed="${f.operators.length > 0}" aria-haspopup="true"><span>${escapeHtml(opLabel)}</span>${CARET}</button>`,
     `<button type="button" class="chip" data-f="favourites" aria-pressed="${f.favourites}">${STAR.replace("<svg", '<svg style="fill:currentColor"')}<span>Saved</span></button>`,
   ];
@@ -738,6 +746,15 @@ filtersEl.addEventListener("click", (e) => {
       break;
     case "price":
       openPriceMenu(chip);
+      break;
+    case "sort":
+      state.sort = state.sort === "cheap" ? "near" : "cheap";
+      store.set("sort", state.sort);
+      haptic(6);
+      closeMenus();
+      renderFilters();
+      renderList(true);
+      listEl.scrollTop = 0;
       break;
     case "ops": {
       const counts = new Map<string, number>();
