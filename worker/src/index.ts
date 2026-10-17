@@ -5,7 +5,9 @@
  * secret name the WhereIsTheBus proxy uses) so it never reaches the browser,
  * this repo or GitHub Actions.
  *
- *   GET /v1/chargers  → normalised snapshot of every EV charging point in SG
+ *   GET /v1/status    → availability only, ~5 KB gzipped (the app polls this)
+ *   GET /v1/stations  → everything else, versioned by `sv` (see shared/split.ts)
+ *   GET /v1/chargers  → the full combined snapshot (older app versions)
  *   GET /health       → { ok, feedUpdated, fetchedAt, stale }
  *
  * EVCBatch is a two-step API: the DataMall call returns a short-lived signed
@@ -17,6 +19,7 @@
 import { normalizeBatch } from "../../shared/normalize";
 import type { ChargersPayload } from "../../shared/schema";
 import { nextFeedAt } from "../../shared/cadence";
+import { statusString, stripStatusJson } from "../../shared/split";
 
 export interface Env {
   LTA_ACCOUNT_KEY: string;
@@ -39,11 +42,20 @@ const DEFAULT_ORIGINS = ["https://chargeit.wwweeeiii.com", "https://alden000.git
 
 // Fixed cache keys: the cached body carries no CORS headers, they're added per
 // request on the way out — so one origin can never poison another's entry.
+// Each tier holds the three bodies of one snapshot under /full, /stations, /status.
 const FRESH_KEY = "https://chargeit-cache.internal/v1/chargers/fresh";
 const STALE_KEY = "https://chargeit-cache.internal/v1/chargers/last-good";
+const PARTS = ["full", "stations", "status"] as const;
 
 interface Snapshot {
+  /** Full combined payload (/v1/chargers). */
   body: string;
+  /** Availability-free stations payload (/v1/stations). */
+  stations: string;
+  /** Availability only (/v1/status). */
+  status: string;
+  /** Content version of `stations`. */
+  sv: string;
   feedUpdated: string | null;
   fetchedAt: string;
   stale: boolean;
@@ -65,7 +77,7 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
   const h: Record<string, string> = {
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Max-Age": "86400",
-    "Access-Control-Expose-Headers": "X-Feed-Updated, X-Fetched-At, X-Stale",
+    "Access-Control-Expose-Headers": "X-Feed-Updated, X-Fetched-At, X-Stale, X-SV",
     Vary: "Origin",
   };
   if (origin && allowedOrigins(env).has(origin)) h["Access-Control-Allow-Origin"] = origin;
@@ -135,32 +147,58 @@ export async function pullFromLta(env: Env): Promise<ChargersPayload> {
   }
 }
 
-function toSnapshot(payload: ChargersPayload): Snapshot {
-  return { body: JSON.stringify(payload), feedUpdated: payload.feedUpdated, fetchedAt: payload.fetchedAt, stale: false };
-}
-
-async function readCache(key: string): Promise<Snapshot | null> {
-  const hit = await caches.default.match(key);
-  if (!hit) return null;
+export async function toSnapshot(payload: ChargersPayload): Promise<Snapshot> {
+  // One serialisation of the big array; everything else is derived from strings.
+  const stationsJson = JSON.stringify(payload.stations);
+  const stripped = stripStatusJson(stationsJson);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(stripped)));
+  const sv = [...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const head = `"v":1,"feedUpdated":${JSON.stringify(payload.feedUpdated)},"fetchedAt":${JSON.stringify(payload.fetchedAt)}`;
   return {
-    body: await hit.text(),
-    feedUpdated: hit.headers.get("X-Feed-Updated") || null,
-    fetchedAt: hit.headers.get("X-Fetched-At") ?? "",
+    body: `{${head},"stations":${stationsJson}}`,
+    stations: `{"v":1,"sv":"${sv}","stations":${stripped}}`,
+    status: `{${head},"sv":"${sv}","s":"${statusString(payload.stations)}"}`,
+    sv,
+    feedUpdated: payload.feedUpdated,
+    fetchedAt: payload.fetchedAt,
     stale: false,
   };
 }
 
-function writeCache(key: string, snap: Snapshot, ttl: number): Promise<void> {
-  return caches.default.put(
-    key,
-    new Response(snap.body, {
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": `public, max-age=${ttl}`,
-        "X-Feed-Updated": snap.feedUpdated ?? "",
-        "X-Fetched-At": snap.fetchedAt,
-      },
-    }),
+async function readCache(key: string): Promise<Snapshot | null> {
+  const hits = await Promise.all(PARTS.map((p) => caches.default.match(`${key}/${p}`)));
+  if (hits.some((h) => !h)) return null; // all three parts or nothing
+  const [full, stations, status] = await Promise.all(hits.map((h) => h!.text()));
+  const h = hits[0]!.headers;
+  if (!h.get("X-SV")) return null;
+  return {
+    body: full,
+    stations,
+    status,
+    sv: h.get("X-SV")!,
+    feedUpdated: h.get("X-Feed-Updated") || null,
+    fetchedAt: h.get("X-Fetched-At") ?? "",
+    stale: false,
+  };
+}
+
+async function writeCache(key: string, snap: Snapshot, ttl: number): Promise<void> {
+  const bodies = { full: snap.body, stations: snap.stations, status: snap.status };
+  await Promise.all(
+    PARTS.map((p) =>
+      caches.default.put(
+        `${key}/${p}`,
+        new Response(bodies[p], {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": `public, max-age=${ttl}`,
+            "X-Feed-Updated": snap.feedUpdated ?? "",
+            "X-Fetched-At": snap.fetchedAt,
+            "X-SV": snap.sv,
+          },
+        }),
+      ),
+    ),
   );
 }
 
@@ -198,7 +236,7 @@ async function getSnapshot(env: Env, ctx: ExecutionContext): Promise<Snapshot> {
 
   inflight ??= (async () => {
     try {
-      const snap = toSnapshot(await pullFromLta(env));
+      const snap = await toSnapshot(await pullFromLta(env));
       lastFailureAt = 0;
       memo = { snap, until: freshUntil(snap) };
       const ttl = freshTtlSeconds(snap.feedUpdated, Date.now());
@@ -230,16 +268,17 @@ export default {
 
     const path = url.pathname.replace(/\/+$/, "") || "/";
 
-    if (path === "/v1/chargers") {
+    if (path === "/v1/chargers" || path === "/v1/status" || path === "/v1/stations") {
       try {
         const snap = await getSnapshot(env, ctx);
-        return json(request, env, snap.body, 200, {
-          // Short: the app times its requests to LTA's 5-minute snapshots.
-          "Cache-Control": snap.stale ? "no-store" : "public, max-age=15",
-          "X-Feed-Updated": snap.feedUpdated ?? "",
-          "X-Fetched-At": snap.fetchedAt,
-          "X-Stale": snap.stale ? "1" : "0",
-        });
+        const meta = { "X-Feed-Updated": snap.feedUpdated ?? "", "X-Fetched-At": snap.fetchedAt, "X-Stale": snap.stale ? "1" : "0", "X-SV": snap.sv };
+        if (path === "/v1/stations") {
+          // Requested by version (?v=<sv>): that exact content never changes.
+          const pinned = url.searchParams.get("v") === snap.sv;
+          return json(request, env, snap.stations, 200, { ...meta, "Cache-Control": pinned ? "public, max-age=604800, immutable" : "public, max-age=60" });
+        }
+        // Short: the app times its requests to LTA's 5-minute snapshots.
+        return json(request, env, path === "/v1/status" ? snap.status : snap.body, 200, { ...meta, "Cache-Control": snap.stale ? "no-store" : "public, max-age=15" });
       } catch (err) {
         console.error("chargers failed:", String(err));
         // Deliberately vague: never echo upstream details (or anything key-adjacent) to clients.
@@ -268,7 +307,7 @@ export default {
     }
 
     if (path === "/") {
-      return json(request, env, JSON.stringify({ name: "chargeit-lta-proxy", endpoints: ["/v1/chargers", "/health"] }));
+      return json(request, env, JSON.stringify({ name: "chargeit-lta-proxy", endpoints: ["/v1/status", "/v1/stations", "/v1/chargers", "/health"] }));
     }
 
     return json(request, env, JSON.stringify({ error: "not_found" }), 404);

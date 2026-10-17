@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { applyStatus, type StationsPayload, type StatusPayload } from "../../shared/split.ts";
 import worker, { __resetForTests, freshTtlSeconds, type Env } from "../../worker/src/index.ts";
 
 const KEY = "test-secret-account-key-123";
@@ -107,7 +108,7 @@ describe("worker /v1/chargers", () => {
     await worker.fetch(req("/v1/chargers"), env, ctx);
     await Promise.all(waits);
     __resetForTests();
-    cache.store.delete("https://chargeit-cache.internal/v1/chargers/fresh");
+    for (const k of [...cache.store.keys()]) if (k.includes("/fresh/")) cache.store.delete(k);
     vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 500 })));
     const res = await worker.fetch(req("/v1/chargers"), env, ctx);
     expect(res.status).toBe(200);
@@ -145,7 +146,7 @@ describe("worker resilience (QA #2, #3)", () => {
     await worker.fetch(req("/v1/chargers"), env, ctx);
     await Promise.all(waits);
     __resetForTests();
-    cache.store.delete("https://chargeit-cache.internal/v1/chargers/fresh");
+    for (const k of [...cache.store.keys()]) if (k.includes("/fresh/")) cache.store.delete(k);
     vi.useFakeTimers();
     // Headers arrive, but the body never does.
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ start() {} }))));
@@ -196,5 +197,39 @@ describe("cache lifetime follows LTA's 5-minute snapshots", () => {
     expect(freshTtlSeconds(stamp, T("2026-10-17T05:05:30Z"))).toBe(60); // plenty of time: full minute
     expect(freshTtlSeconds(stamp, T("2026-10-17T05:10:00Z"))).toBe(40); // expire right as 05:10 lands
     expect(freshTtlSeconds(stamp, T("2026-10-17T05:11:00Z"))).toBe(15); // LTA late: re-check soon
+  });
+});
+
+describe("split endpoints: /v1/stations + /v1/status", () => {
+  it("status is tiny and fits the stations it names; combined equals /v1/chargers", async () => {
+        const full = await (await worker.fetch(req("/v1/chargers"), env, ctx)).json();
+    const statusRes = await worker.fetch(req("/v1/status"), env, ctx);
+    const status = (await statusRes.json()) as StatusPayload;
+    expect(status.s).toBe("1");
+    expect(statusRes.headers.get("Access-Control-Expose-Headers")).toContain("X-SV");
+    const stationsRes = await worker.fetch(req(`/v1/stations?v=${status.sv}`), env, ctx);
+    expect(stationsRes.headers.get("Cache-Control")).toContain("immutable");
+    const stations = (await stationsRes.json()) as StationsPayload;
+    expect(stations.sv).toBe(status.sv);
+    expect(JSON.stringify(stations)).not.toMatch(/"s":[01]/); // no availability in the big file
+    expect(applyStatus(stations, status)).toEqual(full);
+    expect(upstream).toHaveBeenCalledTimes(2); // one LTA pull served all three
+  });
+
+  it("unversioned or outdated stations requests get a short cache", async () => {
+    const res = await worker.fetch(req("/v1/stations?v=old"), env, ctx);
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=60");
+  });
+
+  it("serves all parts from the last good copy when LTA fails", async () => {
+    await worker.fetch(req("/v1/status"), env, ctx);
+    await Promise.all(waits);
+    for (const k of [...cache.store.keys()]) if (k.includes("/fresh/")) cache.store.delete(k);
+    __resetForTests();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 500 })));
+    const res = await worker.fetch(req("/v1/status"), env, ctx);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Stale")).toBe("1");
+    expect(((await res.json()) as StatusPayload).s).toBe("1");
   });
 });

@@ -1,4 +1,4 @@
-import { clarke, expect, mockApi, ready, snapshot, test } from "./fixtures.ts";
+import { clarke, expect, mockApi, ready, snapshot, statusBody, test } from "./fixtures.ts";
 
 test.describe("ChargeIt core journeys", () => {
   test("boots into live mode with pins, stats and a nearby list", async ({ page, api }) => {
@@ -497,10 +497,9 @@ test("live pill counts down to LTA's next snapshot and refreshes on time", async
   // Feed stamped 2 min ago; every later request gets the next 5-minute snapshot.
   const stamp = Date.now() - 120_000;
   let calls = 0;
-  await page.route("**/v1/chargers", (route) => {
-    const feedUpdated = new Date(stamp + (calls++ ? 300_000 : 0)).toISOString();
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...snapshot, fetchedAt: new Date().toISOString(), feedUpdated }) });
-  });
+  await page.route("**/v1/status", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: statusBody(new Date(stamp + (calls++ ? 300_000 : 0)).toISOString()) }),
+  );
   await page.goto("/");
   const count = page.locator("#live .live__next .live__count");
   await expect(count).toBeVisible();
@@ -512,4 +511,26 @@ test("live pill counts down to LTA's next snapshot and refreshes on time", async
   await page.clock.runFor(170_000);
   await expect.poll(() => calls).toBeGreaterThan(before);
   await expect(count).toHaveText(/^4:\d\d$/); // rescheduled from the new snapshot
+});
+
+test("refreshes download only availability; the stations file is fetched once and kept on the device", async ({ page, api }) => {
+  await page.goto("/");
+  await ready(page);
+  expect(api.stationCalls()).toBe(1);
+  await page.getByRole("button", { name: /Live/ }).click(); // manual refresh
+  await expect.poll(() => api.calls()).toBeGreaterThanOrEqual(2);
+  expect(api.stationCalls()).toBe(1);
+  await page.reload();
+  await ready(page);
+  expect(api.stationCalls()).toBe(1); // came from the device, not the network
+});
+
+test("falls back to the full endpoint when the split endpoints are missing (older proxy)", async ({ page, api: _ }) => {
+  await page.route("**/v1/status", (r) => r.fulfill({ status: 404, contentType: "application/json", body: '{"error":"not_found"}' }));
+  let full = 0;
+  page.on("request", (r) => r.url().endsWith("/v1/chargers") && full++);
+  await page.goto("/");
+  await ready(page);
+  expect(full).toBeGreaterThan(0);
+  await expect(page.locator("#live")).toHaveAttribute("data-state", "live");
 });
