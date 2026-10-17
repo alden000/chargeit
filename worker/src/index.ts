@@ -16,6 +16,7 @@
  */
 import { normalizeBatch } from "../../shared/normalize";
 import type { ChargersPayload } from "../../shared/schema";
+import { nextFeedAt } from "../../shared/cadence";
 
 export interface Env {
   LTA_ACCOUNT_KEY: string;
@@ -24,7 +25,8 @@ export interface Env {
 }
 
 const LTA_BATCH_URL = "https://datamall2.mytransport.sg/ltaodataservice/EVCBatch";
-const FRESH_TTL = 60; // seconds an upstream pull is reused
+const FRESH_TTL = 60; // max seconds an upstream pull is reused
+const MIN_FRESH_TTL = 15; // floor, so a late LTA publish is re-checked without hammering
 const STALE_TTL = 24 * 60 * 60; // seconds a last-good copy may be served if LTA fails
 // One overall budget for the whole two-step pull, bodies included. It must stay
 // well under the app's own 15 s timeout so the last-good fallback reaches
@@ -49,7 +51,7 @@ interface Snapshot {
 
 // Per-isolate memo and in-flight de-duplication: a burst of requests landing
 // on one isolate costs exactly one upstream pull.
-let memo: { snap: Snapshot; at: number } | null = null;
+let memo: { snap: Snapshot; until: number } | null = null;
 let inflight: Promise<Snapshot> | null = null;
 let lastFailureAt = 0;
 
@@ -162,12 +164,28 @@ function writeCache(key: string, snap: Snapshot, ttl: number): Promise<void> {
   );
 }
 
+/**
+ * Reuse a pull until LTA's next snapshot should be out (at most FRESH_TTL), so
+ * the first request after a new 5-minute snapshot fetches it rather than
+ * getting up to a minute of the previous one.
+ */
+export function freshTtlSeconds(feedUpdated: string | null, fetchedAtMs: number): number {
+  const until = nextFeedAt(feedUpdated, fetchedAtMs);
+  return Math.max(MIN_FRESH_TTL, Math.min(FRESH_TTL, Math.ceil((until - fetchedAtMs) / 1000)));
+}
+
+function freshUntil(snap: Snapshot): number {
+  const t = Date.parse(snap.fetchedAt);
+  const at = Number.isFinite(t) ? Math.min(t, Date.now()) : Date.now();
+  return at + freshTtlSeconds(snap.feedUpdated, at) * 1000;
+}
+
 async function getSnapshot(env: Env, ctx: ExecutionContext): Promise<Snapshot> {
-  if (memo && Date.now() - memo.at < FRESH_TTL * 1000) return memo.snap;
+  if (memo && Date.now() < memo.until) return memo.snap;
 
   const fresh = await readCache(FRESH_KEY);
   if (fresh) {
-    memo = { snap: fresh, at: Date.now() - ageMs(fresh) };
+    memo = { snap: fresh, until: freshUntil(fresh) };
     return fresh;
   }
 
@@ -182,8 +200,9 @@ async function getSnapshot(env: Env, ctx: ExecutionContext): Promise<Snapshot> {
     try {
       const snap = toSnapshot(await pullFromLta(env));
       lastFailureAt = 0;
-      memo = { snap, at: Date.now() };
-      ctx.waitUntil(Promise.all([writeCache(FRESH_KEY, snap, FRESH_TTL), writeCache(STALE_KEY, snap, STALE_TTL)]));
+      memo = { snap, until: freshUntil(snap) };
+      const ttl = freshTtlSeconds(snap.feedUpdated, Date.now());
+      ctx.waitUntil(Promise.all([writeCache(FRESH_KEY, snap, ttl), writeCache(STALE_KEY, snap, STALE_TTL)]));
       return snap;
     } catch (err) {
       lastFailureAt = Date.now();
@@ -198,11 +217,6 @@ async function getSnapshot(env: Env, ctx: ExecutionContext): Promise<Snapshot> {
     }
   })();
   return inflight;
-}
-
-function ageMs(snap: Snapshot): number {
-  const t = Date.parse(snap.fetchedAt);
-  return Number.isFinite(t) ? Math.max(0, Math.min(Date.now() - t, FRESH_TTL * 1000)) : 0;
 }
 
 export default {
@@ -220,8 +234,8 @@ export default {
       try {
         const snap = await getSnapshot(env, ctx);
         return json(request, env, snap.body, 200, {
-          // Browsers/CDNs may reuse for a short while; the app polls every 60 s.
-          "Cache-Control": snap.stale ? "no-store" : "public, max-age=30, stale-while-revalidate=30",
+          // Short: the app times its requests to LTA's 5-minute snapshots.
+          "Cache-Control": snap.stale ? "no-store" : "public, max-age=15",
           "X-Feed-Updated": snap.feedUpdated ?? "",
           "X-Fetched-At": snap.fetchedAt,
           "X-Stale": snap.stale ? "1" : "0",

@@ -40,8 +40,10 @@ import { BottomSheet } from "./sheet.ts";
 import { registerPwa } from "./pwa.ts";
 import { PROVIDER_APPS, detectPlatform, storeLinks } from "./provider-apps.ts";
 import type { ChargersPayload } from "../shared/schema.ts";
+import { FEED_PERIOD_MS, nextFeedAt } from "../shared/cadence.ts";
 
-const POLL_MS = 60_000;
+const RETRY_MS = 30_000; // after a failed refresh
+
 const SORT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round"><path d="M7 4v16M3.5 16.5 7 20l3.5-3.5M17 20V4M13.5 7.5 17 4l3.5 3.5"/></svg>`;
 const LIST_LIMIT = 50;
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -224,6 +226,7 @@ async function refresh(manual = false): Promise<void> {
     state.loading = false;
     app.classList.remove("is-refreshing");
     liveBtn.removeAttribute("aria-busy");
+    schedulePoll(state.lastError ? RETRY_MS : undefined);
   }
 }
 
@@ -272,7 +275,8 @@ function updateLive(): void {
     st = state.lastError ? "error" : "idle";
     s = state.lastError ? "Offline" : "Connecting…";
   } else {
-    const ago = timeAgo(p.feedUpdated ?? p.fetchedAt);
+    // Compact ("2m ago") so the pill and its countdown fit beside the brand on small phones.
+    const ago = timeAgo(p.feedUpdated ?? p.fetchedAt).replace(/^(\d+) (min|h|d) ago$/, (_, n: string, u: string) => `${n}${u[0]} ago`);
     if (state.mode === "demo") {
       st = "demo";
       s = "Demo";
@@ -289,7 +293,8 @@ function updateLive(): void {
   }
   liveBtn.dataset.state = st;
   text.textContent = s;
-  liveBtn.title = p?.feedUpdated ? `LTA feed updated ${new Date(p.feedUpdated).toLocaleString()} — tap to refresh` : "Tap to refresh";
+  liveBtn.title = p?.feedUpdated ? `LTA feed updated ${new Date(p.feedUpdated).toLocaleString()} — LTA publishes every 5 minutes; tap to refresh` : "Tap to refresh";
+  tickCountdown();
   clearTimeout(liveTimer);
   liveTimer = window.setTimeout(updateLive, 20_000);
 }
@@ -1387,21 +1392,48 @@ matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
 // ── Live status / polling ───────────────────────────────────────────────
 
 liveBtn.addEventListener("click", () => void refresh(true));
+// Refreshes are timed to LTA's 5-minute snapshots (see shared/cadence.ts)
+// rather than polled blindly, and the pill counts down to the next one.
 let pollTimer = 0;
-function schedulePoll(): void {
-  clearInterval(pollTimer);
-  pollTimer = window.setInterval(() => {
-    if (document.visibilityState === "visible") void refresh();
-  }, POLL_MS);
+let nextAt = 0; // when the next automatic refresh runs; 0 = none
+let lateTries = 0;
+function schedulePoll(delay?: number): void {
+  clearTimeout(pollTimer);
+  nextAt = 0;
+  if (state.mode === "demo") return tickCountdown();
+  const now = Date.now();
+  let at = now + (delay ?? 0);
+  if (delay === undefined) {
+    at = Math.min(nextFeedAt(state.payload?.feedUpdated, now), now + FEED_PERIOD_MS + 60_000);
+    if (at > now + 2_000) lateTries = 0;
+    else at = now + [15_000, 30_000, 60_000][Math.min(lateTries++, 2)]; // LTA running late: re-check, backing off
+  }
+  nextAt = at;
+  pollTimer = window.setTimeout(() => {
+    if (document.visibilityState === "visible") void refresh(); // when hidden, the visibility handler catches up
+  }, at - now);
+  tickCountdown();
 }
+
+const countEl = liveBtn.querySelector<HTMLElement>(".live__next")!;
+function tickCountdown(): void {
+  const live = liveBtn.dataset.state === "live" || liveBtn.dataset.state === "stale";
+  countEl.hidden = !live || !nextAt;
+  if (countEl.hidden) return;
+  const left = Math.max(0, Math.ceil((nextAt - Date.now()) / 1000));
+  const checking = left === 0 || state.loading;
+  countEl.classList.toggle("is-checking", checking);
+  countEl.style.setProperty("--done", checking ? "1" : String(Math.min(1, 1 - (left * 1000) / FEED_PERIOD_MS)));
+  countEl.querySelector(".live__count")!.textContent = checking ? "…" : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+}
+window.setInterval(() => {
+  if (document.visibilityState === "visible") tickCountdown();
+}, 1_000);
 document.addEventListener("visibilitychange", () => {
   // Don't keep high-accuracy GPS running in the background.
   if (document.visibilityState === "hidden") stopWatch();
   else if (state.user && watchId === null) locate(false, true);
-  if (document.visibilityState === "visible" && state.payload) {
-    const age = Date.now() - Date.parse(state.payload.fetchedAt);
-    if (!(age < POLL_MS)) void refresh();
-  }
+  if (document.visibilityState === "visible" && state.payload && nextAt && Date.now() >= nextAt) void refresh();
 });
 window.addEventListener("online", () => void refresh());
 
@@ -1426,8 +1458,7 @@ async function boot(): Promise<void> {
   renderList();
   hideSplash();
   if (wantDemo) await showDemo();
-  else await refresh();
-  schedulePoll();
+  else await refresh(); // schedules the next refresh itself
 
   // Re-locate silently if the user granted permission before.
   try {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import worker, { __resetForTests, type Env } from "../../worker/src/index.ts";
+import worker, { __resetForTests, freshTtlSeconds, type Env } from "../../worker/src/index.ts";
 
 const KEY = "test-secret-account-key-123";
 const LINK = "https://dmprod-datasets.s3.ap-southeast-1.amazonaws.com/ev-batch/file.json?sig=abc";
@@ -186,5 +186,15 @@ describe("worker misc routes", () => {
   });
   it("404s unknown paths", async () => {
     expect((await worker.fetch(req("/nope"), env, ctx)).status).toBe(404);
+  });
+});
+
+describe("cache lifetime follows LTA's 5-minute snapshots", () => {
+  const T = (iso: string) => Date.parse(iso);
+  it("worker reuses a pull only until the next snapshot is out (15–60 s)", () => {
+    const stamp = "2026-10-17T05:05:00.000Z";
+    expect(freshTtlSeconds(stamp, T("2026-10-17T05:05:30Z"))).toBe(60); // plenty of time: full minute
+    expect(freshTtlSeconds(stamp, T("2026-10-17T05:10:00Z"))).toBe(40); // expire right as 05:10 lands
+    expect(freshTtlSeconds(stamp, T("2026-10-17T05:11:00Z"))).toBe(15); // LTA late: re-check soon
   });
 });

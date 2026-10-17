@@ -305,6 +305,60 @@ svg {
   color: var(--muted);
   white-space: nowrap;
 }
+/* Countdown to LTA's next 5-minute snapshot: an arc that fills, then spins while checking. */
+.live__next {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 7px;
+  border-left: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+  min-width: 4.4ch;
+}
+.live__next[hidden] {
+  display: none;
+}
+@media (max-width: 380px) {
+  .live {
+    gap: 5px;
+    padding: 0 9px;
+  }
+  .live__next {
+    padding-left: 5px;
+    gap: 3px;
+  }
+  .brand__word {
+    font-size: 19px;
+  }
+}
+@media (max-width: 345px) {
+  .brand__word {
+    display: none;
+  }
+}
+.live__next svg {
+  width: 13px;
+  height: 13px;
+  transform: rotate(-90deg);
+  fill: none;
+  stroke-width: 2.4;
+}
+.live__next circle {
+  stroke: var(--line);
+}
+.live__next .live__arc {
+  stroke: var(--volt);
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: calc(100 - var(--done, 0) * 100);
+  transition: stroke-dashoffset 1s linear;
+}
+.live__next.is-checking .live__arc {
+  stroke-dashoffset: 72;
+  transition: none;
+  transform-origin: 8px 8px;
+  animation: spin 0.9s linear infinite;
+}
 .live__dot {
   width: 8px;
   height: 8px;

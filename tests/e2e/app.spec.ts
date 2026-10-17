@@ -1,4 +1,4 @@
-import { clarke, expect, ready, snapshot, test } from "./fixtures.ts";
+import { clarke, expect, mockApi, ready, snapshot, test } from "./fixtures.ts";
 
 test.describe("ChargeIt core journeys", () => {
   test("boots into live mode with pins, stats and a nearby list", async ({ page, api }) => {
@@ -489,4 +489,27 @@ test.describe("recent searches", () => {
     expect(await page.locator(".search__item--recent").count()).toBeLessThanOrEqual(5);
     expect(await page.evaluate(() => (window as unknown as { __x?: number }).__x)).toBeUndefined();
   });
+});
+
+test("live pill counts down to LTA's next snapshot and refreshes on time", async ({ page }) => {
+  await page.clock.install();
+  await mockApi(page, () => "ok");
+  // Feed stamped 2 min ago; every later request gets the next 5-minute snapshot.
+  const stamp = Date.now() - 120_000;
+  let calls = 0;
+  await page.route("**/v1/chargers", (route) => {
+    const feedUpdated = new Date(stamp + (calls++ ? 300_000 : 0)).toISOString();
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...snapshot, fetchedAt: new Date().toISOString(), feedUpdated }) });
+  });
+  await page.goto("/");
+  const count = page.locator("#live .live__next .live__count");
+  await expect(count).toBeVisible();
+  await expect(count).toHaveText(/^3:[0-4]\d$/); // due ~3:40 from now
+  const before = calls;
+  await page.clock.runFor(60_000);
+  await expect(count).toHaveText(/^2:[0-4]\d$/);
+  expect(calls).toBe(before); // no blind polling in between
+  await page.clock.runFor(170_000);
+  await expect.poll(() => calls).toBeGreaterThan(before);
+  await expect(count).toHaveText(/^4:\d\d$/); // rescheduled from the new snapshot
 });
