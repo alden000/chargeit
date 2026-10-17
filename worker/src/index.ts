@@ -19,7 +19,7 @@
 import { normalizeBatch } from "../../shared/normalize";
 import type { ChargersPayload } from "../../shared/schema";
 import { nextFeedAt } from "../../shared/cadence";
-import { statusString, stripStatusJson } from "../../shared/split";
+import { layoutKey, statusString, stripStatusJson } from "../../shared/split";
 
 export interface Env {
   LTA_ACCOUNT_KEY: string;
@@ -54,8 +54,9 @@ interface Snapshot {
   stations: string;
   /** Availability only (/v1/status). */
   status: string;
-  /** Content version of `stations`. */
+  /** Layout and content versions of `stations` (see shared/split.ts). */
   sv: string;
+  cv: string;
   feedUpdated: string | null;
   fetchedAt: string;
   stale: boolean;
@@ -147,18 +148,23 @@ export async function pullFromLta(env: Env): Promise<ChargersPayload> {
   }
 }
 
+async function shortHash(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return [...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export async function toSnapshot(payload: ChargersPayload): Promise<Snapshot> {
   // One serialisation of the big array; everything else is derived from strings.
   const stationsJson = JSON.stringify(payload.stations);
   const stripped = stripStatusJson(stationsJson);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(stripped)));
-  const sv = [...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const [sv, cv] = await Promise.all([shortHash(layoutKey(payload.stations)), shortHash(stripped)]);
   const head = `"v":1,"feedUpdated":${JSON.stringify(payload.feedUpdated)},"fetchedAt":${JSON.stringify(payload.fetchedAt)}`;
   return {
     body: `{${head},"stations":${stationsJson}}`,
-    stations: `{"v":1,"sv":"${sv}","stations":${stripped}}`,
-    status: `{${head},"sv":"${sv}","s":"${statusString(payload.stations)}"}`,
+    stations: `{"v":1,"sv":"${sv}","cv":"${cv}","stations":${stripped}}`,
+    status: `{${head},"sv":"${sv}","cv":"${cv}","s":"${statusString(payload.stations)}"}`,
     sv,
+    cv,
     feedUpdated: payload.feedUpdated,
     fetchedAt: payload.fetchedAt,
     stale: false,
@@ -170,12 +176,13 @@ async function readCache(key: string): Promise<Snapshot | null> {
   if (hits.some((h) => !h)) return null; // all three parts or nothing
   const [full, stations, status] = await Promise.all(hits.map((h) => h!.text()));
   const h = hits[0]!.headers;
-  if (!h.get("X-SV")) return null;
+  if (!h.get("X-SV") || !h.get("X-CV")) return null; // also drops entries from before cv existed
   return {
     body: full,
     stations,
     status,
     sv: h.get("X-SV")!,
+    cv: h.get("X-CV")!,
     feedUpdated: h.get("X-Feed-Updated") || null,
     fetchedAt: h.get("X-Fetched-At") ?? "",
     stale: false,
@@ -195,6 +202,7 @@ async function writeCache(key: string, snap: Snapshot, ttl: number): Promise<voi
             "X-Feed-Updated": snap.feedUpdated ?? "",
             "X-Fetched-At": snap.fetchedAt,
             "X-SV": snap.sv,
+            "X-CV": snap.cv,
           },
         }),
       ),
@@ -273,8 +281,8 @@ export default {
         const snap = await getSnapshot(env, ctx);
         const meta = { "X-Feed-Updated": snap.feedUpdated ?? "", "X-Fetched-At": snap.fetchedAt, "X-Stale": snap.stale ? "1" : "0", "X-SV": snap.sv };
         if (path === "/v1/stations") {
-          // Requested by version (?v=<sv>): that exact content never changes.
-          const pinned = url.searchParams.get("v") === snap.sv;
+          // Requested by content version (?v=<cv>): that exact content never changes.
+          const pinned = url.searchParams.get("v") === snap.cv;
           return json(request, env, snap.stations, 200, { ...meta, "Cache-Control": pinned ? "public, max-age=604800, immutable" : "public, max-age=60" });
         }
         // Short: the app times its requests to LTA's 5-minute snapshots.

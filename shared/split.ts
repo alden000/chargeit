@@ -2,29 +2,43 @@
  * The snapshot is ~2.4 MB, but only connector availability changes every
  * 5 minutes. So the API serves it in two parts:
  *
- *   /v1/stations → everything except availability (~270 KB gzipped), versioned
- *                  by `sv`, a hash of its content; it changes rarely.
- *   /v1/status   → `sv` + one character per connector (~5 KB gzipped).
+ *   /v1/stations → everything except availability (~270 KB gzipped).
+ *   /v1/status   → one character per connector (~2 KB gzipped).
  *
- * The app keeps the stations file and re-downloads it only when `sv` changes,
- * then lays the status string over it. Connectors are visited in the same
- * order on both sides: stations → points → plugs → connectors.
+ * Both carry two versions of the stations file:
+ *   sv — its layout: which sites and connectors, in which order. The status
+ *        string only lines up with a stations file of the same sv, so a change
+ *        means "re-download now". Changes only when chargers come or go.
+ *   cv — its full content. LTA flips names/coordinates of some sites between
+ *        snapshots, so this changes often; the app picks it up at most hourly.
+ *
+ * Connectors are visited in the same order on both sides: stations → points →
+ * plugs → connectors (normalizeBatch sorts all of them).
  */
 import type { ChargersPayload, Station } from "./schema";
 
 export interface StationsPayload {
   v: 1;
   sv: string;
+  cv: string;
   stations: Station[];
 }
 
 export interface StatusPayload {
   v: 1;
   sv: string;
+  cv: string;
   feedUpdated: string | null;
   fetchedAt: string;
   /** "1" free, "0" in use, "-" unknown — one per connector, in order. */
   s: string;
+}
+
+/** What `sv` hashes: site ids and their connector ids, in order. */
+export function layoutKey(stations: readonly Station[]): string {
+  const out: string[] = [];
+  for (const st of stations) out.push(`${st.id}:${st.points.map((pt) => pt.plugs.map((pl) => pl.connectors.map((c) => c.id).join(",")).join("|")).join("/")}`);
+  return out.join(";");
 }
 
 export function statusString(stations: readonly Station[]): string {

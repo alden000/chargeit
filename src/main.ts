@@ -190,6 +190,7 @@ function applyPayload(payload: ChargersPayload, mode: DataMode): void {
   state.mode = mode;
   state.all = toViewModels(payload);
   state.byId = new Map(state.all.map((s) => [s.id, s]));
+  migrateIds();
   refilter();
   updateLive();
   if (state.selected) {
@@ -200,6 +201,33 @@ function applyPayload(payload: ChargersPayload, mode: DataMode): void {
     const fromHash = readHash();
     if (fromHash && state.byId.has(fromHash)) openDetail(fromHash, { fly: true });
   }
+}
+
+/**
+ * Station ids used to be "<postal>-<location hash>"; they are now the postal
+ * code alone (shared/normalize.ts). Map old ids from favourites, recents and
+ * shared links onto current ones.
+ */
+function resolveId(id: string): string {
+  if (state.byId.has(id)) return id;
+  const postal = id.split("-")[0];
+  return postal !== id && state.byId.has(postal) ? postal : id;
+}
+
+function migrateIds(): void {
+  const favs = [...state.favs].map(resolveId);
+  if (favs.some((id, i) => id !== [...state.favs][i])) {
+    state.favs = new Set(favs);
+    store.set("favs", favs);
+  }
+  const recents = loadRecents();
+  let changed = false;
+  for (const r of recents) {
+    if (r.kind !== "station") continue;
+    const id = resolveId(r.id);
+    if (id !== r.id) [r.id, changed] = [id, true];
+  }
+  if (changed) store.set("recents", recents);
 }
 
 async function refresh(manual = false): Promise<void> {
@@ -687,7 +715,7 @@ function readHash(): string | null {
   const m = location.hash.match(/s=([^&]+)/);
   if (!m) return null;
   try {
-    return decodeURIComponent(m[1]);
+    return resolveId(decodeURIComponent(m[1]));
   } catch {
     return null; // malformed link — ignore rather than break boot
   }

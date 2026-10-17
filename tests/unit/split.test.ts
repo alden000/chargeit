@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChargersPayload } from "../../shared/schema.ts";
-import { applyStatus, statusString, stripStatusJson } from "../../shared/split.ts";
+import { applyStatus, layoutKey, statusString, stripStatusJson } from "../../shared/split.ts";
 
 const full: ChargersPayload = {
   v: 1,
@@ -19,8 +19,8 @@ const full: ChargersPayload = {
 
 describe("stations/status split", () => {
   const stripped = JSON.parse(stripStatusJson(JSON.stringify(full.stations)));
-  const stations = { v: 1 as const, sv: "x", stations: stripped };
-  const status = { v: 1 as const, sv: "x", feedUpdated: full.feedUpdated, fetchedAt: full.fetchedAt, s: statusString(full.stations) };
+  const stations = { v: 1 as const, sv: "x", cv: "c", stations: stripped };
+  const status = { v: 1 as const, sv: "x", cv: "c", feedUpdated: full.feedUpdated, fetchedAt: full.fetchedAt, s: statusString(full.stations) };
 
   it("encodes one character per connector", () => expect(status.s).toBe("10-"));
 
@@ -35,5 +35,15 @@ describe("stations/status split", () => {
     expect(applyStatus(stations, { ...status, sv: "y" })).toBeNull();
     expect(applyStatus(stations, { ...status, s: "10" })).toBeNull();
     expect(applyStatus(stations, { ...status, s: "10-1" })).toBeNull();
+  });
+
+  it("layout ignores names, coordinates and prices but not chargers", () => {
+    const moved = structuredClone(full.stations);
+    moved[0].name = "Renamed";
+    moved[0].lat += 0.001;
+    moved[0].points[0].plugs[0].price = 0.9;
+    expect(layoutKey(moved)).toBe(layoutKey(full.stations));
+    moved[0].points[0].plugs[0].connectors.push({ id: "9", s: 1 });
+    expect(layoutKey(moved)).not.toBe(layoutKey(full.stations));
   });
 });

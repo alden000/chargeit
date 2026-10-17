@@ -149,31 +149,49 @@ function normalizePoint(raw: unknown): ChargePoint | null {
   };
 }
 
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const firstConnector = (pl: Plug) => pl.connectors[0]?.id ?? "";
+const plugKey = (pl: Plug) => `${firstConnector(pl)}|${pl.type}|${pl.current}|${pl.kw}|${pl.price}|${pl.priceType}`;
+const pointKey = (pt: ChargePoint) => `${pt.plugs[0] ? plugKey(pt.plugs[0]) : ""}|${pt.operator}|${pt.position}|${pt.hours}`;
+
+/**
+ * LTA lists sites, charge points and connectors in a different order in every
+ * snapshot. Sorting gives identical content identical bytes, which keeps the
+ * stations file's version stable (see shared/split.ts).
+ */
+function canonicalPoints(points: ChargePoint[]): ChargePoint[] {
+  for (const pt of points) {
+    for (const pl of pt.plugs) pl.connectors.sort((a, b) => cmp(a.id, b.id));
+    pt.plugs.sort((a, b) => cmp(plugKey(a), plugKey(b)));
+  }
+  return points.sort((a, b) => cmp(pointKey(a), pointKey(b)));
+}
+
+const lowestConnector = (points: ChargePoint[]) =>
+  points.flatMap((pt) => pt.plugs.flatMap((pl) => pl.connectors.map((c) => c.id))).filter(Boolean).sort(cmp)[0] ?? "";
+
 /** Turns the raw EVCBatch file into the compact payload. Never throws on odd records. */
 export function normalizeBatch(raw: unknown, fetchedAt: Date = new Date()): ChargersPayload {
   const stations: Station[] = [];
-  const ids = new Map<string, number>();
   for (const st of findStations(raw)) {
     if (!isDict(st)) continue;
     const lat = num(pick(st, "latitude", "lat"));
     const lng = num(pick(st, "longtitude", "longitude", "lng", "lon"));
     if (lat === null || lng === null || !inSingapore(lat, lng)) continue;
-    const points = list(pick(st, "chargingPoints"))
-      .map(normalizePoint)
-      .filter((p): p is ChargePoint => p !== null);
+    const points = canonicalPoints(
+      list(pick(st, "chargingPoints"))
+        .map(normalizePoint)
+        .filter((p): p is ChargePoint => p !== null),
+    );
     if (!points.length) continue;
     const name = str(pick(st, "name"));
     const postal = str(pick(st, "postalCode", "postal"));
-    // Stable across feed refreshes so favourites and shared links survive:
-    // LTA's locationId when present, else postal code + location (~10 m), and
-    // the name only to separate distinct sites at the same spot.
-    let id = str(pick(st, "locationId")) || `${postal || "x"}-${hashId(`${lat.toFixed(4)}|${lng.toFixed(4)}`)}`;
-    if (ids.has(id)) id = `${id}-${hashId(name)}`;
-    const n = ids.get(id) ?? 0;
-    ids.set(id, n + 1);
-    if (n) id = `${id}-${n}`;
+    // Stable across feed refreshes so favourites and shared links survive.
+    // Not location or name: LTA flips both for some sites between snapshots
+    // (e.g. ~100 m apart, "IKEA FOOD CENTRE" ↔ "IKEA ALEXANDRA"). Postal codes
+    // and charger IDs hold steady; finalised in assignIds().
     stations.push({
-      id,
+      id: str(pick(st, "locationId")) || postal,
       name: name || str(pick(st, "address")) || "EV charging point",
       address: str(pick(st, "address")),
       postal,
@@ -182,10 +200,39 @@ export function normalizeBatch(raw: unknown, fetchedAt: Date = new Date()): Char
       points,
     });
   }
+  assignIds(stations);
+  stations.sort((a, b) => cmp(a.id, b.id));
   return {
     v: 1,
     feedUpdated: toIsoSgt(pick(raw, "LastUpdatedTime") ?? pick(pick(raw, "value"), "LastUpdatedTime")),
     fetchedAt: fetchedAt.toISOString(),
     stations,
   };
+}
+
+/**
+ * Final ids: the postal code (or LTA locationId) on its own when unique; sites
+ * sharing one are told apart by their lowest charger ID, then by order.
+ */
+function assignIds(stations: Station[]): void {
+  const groups = new Map<string, Station[]>();
+  for (const s of stations) {
+    const base = s.id || `x${hashId(lowestConnector(s.points) || `${s.lat.toFixed(4)}|${s.lng.toFixed(4)}`)}`;
+    s.id = base;
+    groups.set(base, [...(groups.get(base) ?? []), s]);
+  }
+  const used = new Set<string>();
+  for (const [base, group] of groups) {
+    if (group.length === 1) {
+      used.add(base);
+      continue;
+    }
+    group.sort((a, b) => cmp(lowestConnector(a.points), lowestConnector(b.points)));
+    for (const s of group) {
+      let id = `${base}-${hashId(lowestConnector(s.points) || s.name)}`;
+      for (let n = 1; used.has(id); n++) id = `${base}-${hashId(lowestConnector(s.points) || s.name)}-${n}`;
+      used.add(id);
+      s.id = id;
+    }
+  }
 }

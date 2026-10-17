@@ -11,11 +11,11 @@ export const clarke = snapshot.stations.find((s) => s.name === "CLARKE QUAY")!;
 export type ApiMode = "ok" | "down" | "stale";
 
 export const TEST_SV = "test-sv";
-const stationsBody = `{"v":1,"sv":"${TEST_SV}","stations":${stripStatusJson(JSON.stringify(snapshot.stations))}}`;
+const stationsBody = `{"v":1,"sv":"${TEST_SV}","cv":"test-cv","stations":${stripStatusJson(JSON.stringify(snapshot.stations))}}`;
 
 /** /v1/status as the Worker serves it; `feedUpdated` defaults to 2 minutes ago. */
 export function statusBody(feedUpdated = new Date(Date.now() - 120_000).toISOString()): string {
-  return JSON.stringify({ v: 1, feedUpdated, fetchedAt: new Date().toISOString(), sv: TEST_SV, s: statusString(snapshot.stations) });
+  return JSON.stringify({ v: 1, feedUpdated, fetchedAt: new Date().toISOString(), sv: TEST_SV, cv: "test-cv", s: statusString(snapshot.stations) });
 }
 
 export async function mockApi(page: Page, mode: () => ApiMode): Promise<{ calls: () => number; stationCalls: () => number }> {

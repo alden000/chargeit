@@ -103,6 +103,24 @@ describe("normalizeBatch", () => {
     expect(a).toBe(b);
   });
 
+  it("uses the postal code as the id, unmoved by LTA's coordinate/name flips", () => {
+    const a = normalizeBatch({ evLocationsData: [rawStation()] }).stations[0].id;
+    const b = normalizeBatch({ evLocationsData: [rawStation({ name: "IKEA ALEXANDRA", latitude: "1.2913", longtitude: "103.8471" })] }).stations[0].id;
+    expect(a).toBe("179024");
+    expect(b).toBe(a);
+  });
+
+  it("gives identical bytes whatever order LTA lists sites, points and connectors in", () => {
+    const other = rawStation({ postalCode: "018956", name: "MARINA" });
+    const shuffled = rawStation();
+    (shuffled.chargingPoints as any[]).reverse();
+    for (const pt of shuffled.chargingPoints as any[]) for (const pl of pt.plugTypes) pl.evIds.reverse();
+    const a = normalizeBatch({ evLocationsData: [rawStation(), other] }, new Date(0));
+    const b = normalizeBatch({ evLocationsData: [other, shuffled] }, new Date(0));
+    expect(JSON.stringify(b)).toBe(JSON.stringify(a));
+    expect(a.stations.map((s) => s.id)).toEqual(["018956", "179024"]);
+  });
+
   it("treats priceType 'free' as a zero price", () => {
     const st = rawStation();
     (st.chargingPoints as any[])[0].plugTypes[0].priceType = "Free";

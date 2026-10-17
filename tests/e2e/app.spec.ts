@@ -219,9 +219,11 @@ test.describe("hardening (QA regressions)", () => {
 });
 
 test.describe("corporate / fleet discounts", () => {
+  // The station's best (lowest) list price, which is what the detail tile shows.
   const spPrice = () => {
-    for (const p of clarke.points) for (const pl of p.plugs) if (pl.price) return pl.price;
-    throw new Error("fixture: Clarke Quay has no price");
+    const prices = clarke.points.flatMap((p) => p.plugs.map((pl) => pl.price)).filter((x): x is number => !!x);
+    if (!prices.length) throw new Error("fixture: Clarke Quay has no price");
+    return Math.min(...prices);
   };
 
   test("adding a provider discount re-prices the list and detail, and persists", async ({ page, api: _ }) => {
@@ -533,4 +535,17 @@ test("falls back to the full endpoint when the split endpoints are missing (olde
   await ready(page);
   expect(full).toBeGreaterThan(0);
   await expect(page.locator("#live")).toHaveAttribute("data-state", "live");
+});
+
+test("old-style station ids in favourites, recents and links still work", async ({ page, api: _ }) => {
+  expect(clarke.id).toBe("179024");
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("seeded")) return;
+    sessionStorage.setItem("seeded", "1");
+    localStorage.setItem("chargeit:favs", JSON.stringify(["179024-8wmn7h"]));
+    localStorage.setItem("chargeit:recents", JSON.stringify([{ kind: "station", id: "179024-8wmn7h", label: "Clarke Quay", sub: "" }]));
+  });
+  await page.goto("/#s=179024-8wmn7h");
+  await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+  await expect.poll(() => page.evaluate(() => [localStorage.getItem("chargeit:favs"), JSON.parse(localStorage.getItem("chargeit:recents") ?? "[]")[0]?.id])).toEqual(['["179024"]', "179024"]);
 });

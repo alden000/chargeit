@@ -99,15 +99,24 @@ async function stored(url: string): Promise<unknown> {
   }
 }
 
-const isStations = (v: unknown): v is StationsPayload => isPayload(v) && typeof (v as unknown as StationsPayload).sv === "string";
-const isStatus = (v: unknown): v is StatusPayload => !!v && typeof v === "object" && typeof (v as StatusPayload).sv === "string" && typeof (v as StatusPayload).s === "string";
+const isStations = (v: unknown): v is StationsPayload =>
+  isPayload(v) && typeof (v as unknown as StationsPayload).sv === "string" && typeof (v as unknown as StationsPayload).cv === "string";
+const isStatus = (v: unknown): v is StatusPayload =>
+  !!v && typeof v === "object" && typeof (v as StatusPayload).sv === "string" && typeof (v as StatusPayload).cv === "string" && typeof (v as StatusPayload).s === "string";
+
+/** Name/location/price edits (a new `cv` with the same layout) are picked up at most this often. */
+const CONTENT_REFRESH_MS = 60 * 60_000;
 
 /** The big, rarely-changing part, kept in memory and on the device between refreshes. */
-let stationsMem: StationsPayload | null = null;
-async function localStations(): Promise<StationsPayload | null> {
+interface LocalStations {
+  data: StationsPayload;
+  savedAt: number;
+}
+let stationsMem: LocalStations | null = null;
+async function localStations(): Promise<LocalStations | null> {
   if (!stationsMem) {
-    const s = await stored(STATIONS_URL);
-    if (isStations(s)) stationsMem = s;
+    const s = (await stored(STATIONS_URL)) as Partial<LocalStations> | null;
+    if (s && isStations(s.data) && typeof s.savedAt === "number") stationsMem = { data: s.data, savedAt: s.savedAt };
   }
   return stationsMem;
 }
@@ -121,15 +130,22 @@ async function loadSplit(): Promise<LoadResult> {
     throw /^HTTP 4/.test(err.message) ? new SplitUnavailable(err.message) : err;
   });
   if (!isStatus(status)) throw new SplitUnavailable("Malformed status");
-  let payload = await localStations().then((st) => st && applyStatus(st, status));
-  if (!payload) {
-    // Versioned URL, so the browser's HTTP cache may answer it too.
-    const { data } = await fetchJson(`${API_BASE}/v1/stations?v=${encodeURIComponent(status.sv)}`, 30_000, "default");
-    if (!isStations(data)) throw new SplitUnavailable("Malformed stations");
-    payload = applyStatus(data, status);
-    if (!payload) throw new SplitUnavailable("Stations changed mid-refresh");
-    stationsMem = data;
-    void store(STATIONS_URL, data);
+  const local = await localStations();
+  let payload = local && applyStatus(local.data, status);
+  const contentDue = !!local && local.data.cv !== status.cv && Date.now() - local.savedAt > CONTENT_REFRESH_MS;
+  if (!payload || contentDue) {
+    try {
+      // Versioned URL, so the browser's HTTP cache may answer it too.
+      const { data } = await fetchJson(`${API_BASE}/v1/stations?v=${encodeURIComponent(status.cv)}`, 30_000, "default");
+      if (!isStations(data)) throw new SplitUnavailable("Malformed stations");
+      const fresh = applyStatus(data, status);
+      if (!fresh) throw new SplitUnavailable("Stations changed mid-refresh");
+      payload = fresh;
+      stationsMem = { data, savedAt: Date.now() };
+      void store(STATIONS_URL, stationsMem);
+    } catch (err) {
+      if (!payload) throw err; // a missed hourly content refresh isn't worth failing over
+    }
   }
   void store(STATUS_URL, status);
   return { payload: sanitizePayload(payload), mode: res.headers.get("X-Stale") === "1" ? "stale" : "live" };
@@ -144,7 +160,7 @@ async function loadFull(): Promise<LoadResult> {
 
 async function readLastGood(): Promise<ChargersPayload | null> {
   const [st, status] = await Promise.all([localStations(), stored(STATUS_URL)]);
-  const split = st && isStatus(status) ? applyStatus(st, status) : null;
+  const split = st && isStatus(status) ? applyStatus(st.data, status) : null;
   const raw = await stored(LAST_GOOD_URL);
   const full = isPayload(raw) ? raw : null;
   if (split && full) return Date.parse(full.fetchedAt) > Date.parse(split.fetchedAt) ? full : split; // whichever is newer

@@ -207,7 +207,7 @@ describe("split endpoints: /v1/stations + /v1/status", () => {
     const status = (await statusRes.json()) as StatusPayload;
     expect(status.s).toBe("1");
     expect(statusRes.headers.get("Access-Control-Expose-Headers")).toContain("X-SV");
-    const stationsRes = await worker.fetch(req(`/v1/stations?v=${status.sv}`), env, ctx);
+    const stationsRes = await worker.fetch(req(`/v1/stations?v=${status.cv}`), env, ctx);
     expect(stationsRes.headers.get("Cache-Control")).toContain("immutable");
     const stations = (await stationsRes.json()) as StationsPayload;
     expect(stations.sv).toBe(status.sv);
