@@ -386,3 +386,25 @@ test("sort chip: Cheapest orders the list by effective price, unlisted last; rem
   await expect(page.locator('[data-f="sort"]')).toContainText("Nearest");
   await expect(page.locator(".card .card__price")).toHaveCount(0);
 });
+
+test("picking a searched place centres the map even if the keyboard closing resizes the page", async ({ page, api: _ }) => {
+  await page.goto("/");
+  await ready(page);
+  await page.evaluate(() => (window as unknown as { __chargeit: { cmap: { map: { jumpTo(o: object): void } } } }).__chargeit.cmap.map.jumpTo({ center: [103.79, 1.437], zoom: 15 }));
+  await page.locator("#search").fill("bishan");
+  await page.locator(".search__item[data-place]").first().click();
+  // Simulate the on-screen keyboard closing mid-flight (viewport grows back).
+  const vp = page.viewportSize()!;
+  await page.setViewportSize({ width: vp.width, height: vp.height - 300 });
+  await page.waitForTimeout(120);
+  await page.setViewportSize(vp);
+  await expect
+    .poll(
+      async () => {
+        const c = await page.evaluate(() => (window as unknown as { __chargeit: { cmap: { map: { getCenter(): { lat: number; lng: number } } } } }).__chargeit.cmap.map.getCenter());
+        return Math.abs(c.lat - 1.351) < 0.002 && Math.abs(c.lng - 103.85) < 0.002;
+      },
+      { timeout: 8000 },
+    )
+    .toBe(true);
+});

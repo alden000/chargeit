@@ -205,7 +205,28 @@ export class ChargeMap {
     // Keep the attribution as a compact (i) so it doesn't cover pins on small screens.
     this.map.once("load", () => container.querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show"));
     this.map.on("render", () => this.scheduleMarkers());
-    this.map.on("moveend", () => this.events.onMove());
+    this.map.on("moveend", () => {
+      if (this.pendingCamera && this.atPendingTarget()) this.pendingCamera = null;
+      this.events.onMove();
+    });
+    // Finish a programmatic trip that a container resize cut short (see pendingCamera).
+    this.map.on("resize", () => {
+      const p = this.pendingCamera;
+      if (!p) return;
+      if (Date.now() - p.at > 4000) {
+        this.pendingCamera = null; // too old: don't yank the map on a later, unrelated resize
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (this.pendingCamera === p && !this.atPendingTarget()) this.moveCamera(p.center, p.zoom, p.bottomPad, p.pitch);
+      });
+    });
+    // The user taking over (drag, pinch, rotate, tilt) cancels any pending trip.
+    for (const ev of ["dragstart", "zoomstart", "rotatestart", "pitchstart"] as const) {
+      this.map.on(ev, (e: { originalEvent?: Event }) => {
+        if (e.originalEvent) this.pendingCamera = null;
+      });
+    }
     this.map.on("click", (e) => {
       const t = e.originalEvent.target as HTMLElement | null;
       if (!t?.closest(".pin")) this.events.onBackgroundClick();
@@ -427,7 +448,20 @@ export class ChargeMap {
     this.flyTo([st.lng, st.lat], zoom, bottomPad, 45);
   }
 
+  /**
+   * A programmatic camera move in progress. MapLibre cancels a flyTo when the
+   * map container resizes, which on phones happens right after picking a search
+   * result (the keyboard closes and the viewport grows). We remember the target
+   * and finish the trip after such a resize, unless the user has taken over.
+   */
+  private pendingCamera: { center: [number, number]; zoom: number; bottomPad: number; pitch?: number; at: number } | null = null;
+
   flyTo(center: [number, number], zoom: number, bottomPad = 0, pitch?: number): void {
+    this.pendingCamera = { center, zoom, bottomPad, pitch, at: Date.now() };
+    this.moveCamera(center, zoom, bottomPad, pitch);
+  }
+
+  private moveCamera(center: [number, number], zoom: number, bottomPad: number, pitch?: number): void {
     const padding = { top: 140, bottom: bottomPad, left: 0, right: 0 };
     if (window.innerWidth >= 820) Object.assign(padding, { left: 440, bottom: 0, top: 0 });
     // Note: MapLibre persists camera padding after flyTo, which is what we want here.
@@ -436,6 +470,13 @@ export class ChargeMap {
       return;
     }
     this.map.flyTo({ center, zoom, padding, pitch: pitch ?? this.map.getPitch(), speed: 1.4, curve: 1.5, essential: true });
+  }
+
+  private atPendingTarget(): boolean {
+    const p = this.pendingCamera;
+    if (!p) return true;
+    const c = this.map.getCenter();
+    return Math.abs(c.lng - p.center[0]) < 1e-4 && Math.abs(c.lat - p.center[1]) < 1e-4 && Math.abs(this.map.getZoom() - p.zoom) < 0.05;
   }
 
   showUser(pos: { lng: number; lat: number }, ripple: boolean): void {
