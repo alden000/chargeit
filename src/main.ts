@@ -119,6 +119,7 @@ const detailView = $("#view-detail");
 const liveBtn = $<HTMLButtonElement>("#live");
 const searchInput = $<HTMLInputElement>("#search");
 const searchResults = $<HTMLUListElement>("#search-results");
+const topbarEl = $(".topbar");
 const searchClear = $<HTMLButtonElement>("#search-clear");
 const filtersEl = $("#filters");
 const locateBtn = $<HTMLButtonElement>("#locate");
@@ -905,6 +906,78 @@ document.addEventListener("keydown", (e) => {
 
 // ── Search ──────────────────────────────────────────────────────────────
 
+// ── Recent searches (last 5 picks, this device only) ────────────────────
+
+type Recent =
+  | { kind: "station"; id: string; label: string; sub: string }
+  | { kind: "place"; label: string; sub: string; lat: number; lng: number };
+
+const MAX_RECENTS = 5;
+const CLOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>`;
+
+function loadRecents(): Recent[] {
+  const raw = store.get<unknown>("recents", []);
+  if (!Array.isArray(raw)) return [];
+  const out: Recent[] = [];
+  for (const r of raw.slice(0, MAX_RECENTS)) {
+    if (!r || typeof r !== "object") continue;
+    const o = r as Record<string, unknown>;
+    const label = typeof o.label === "string" ? o.label.slice(0, 120) : "";
+    const sub = typeof o.sub === "string" ? o.sub.slice(0, 200) : "";
+    if (!label) continue;
+    if (o.kind === "station" && typeof o.id === "string" && o.id) out.push({ kind: "station", id: o.id.slice(0, 80), label, sub });
+    else if (o.kind === "place" && typeof o.lat === "number" && typeof o.lng === "number" && Number.isFinite(o.lat) && Number.isFinite(o.lng)) {
+      out.push({ kind: "place", label, sub, lat: o.lat, lng: o.lng });
+    }
+  }
+  return out;
+}
+
+let recents = loadRecents();
+const recentKey = (r: Recent) => (r.kind === "station" ? `s:${r.id}` : `p:${r.label}|${r.lat.toFixed(4)}|${r.lng.toFixed(4)}`);
+
+function addRecent(r: Recent): void {
+  recents = [r, ...recents.filter((x) => recentKey(x) !== recentKey(r))].slice(0, MAX_RECENTS);
+  store.set("recents", recents);
+}
+
+function removeRecent(i: number): void {
+  recents = recents.filter((_, j) => j !== i);
+  store.set("recents", recents);
+}
+
+function renderRecents(): void {
+  if (!recents.length) {
+    hideResults();
+    return;
+  }
+  searchResults.innerHTML =
+    `<li class="search__group search__group--row" role="presentation"><span>Recent searches</span><button type="button" class="search__clearall" data-clear-recents>Clear</button></li>` +
+    recents
+      .map((r, i) => {
+        // Chargers show their live availability; places their address.
+        const st = r.kind === "station" ? state.byId.get(r.id) : undefined;
+        const sub = st ? `<span class="avail--${st.sum.state}">${availabilityText(st.sum)}</span> · ${escapeHtml(r.sub)}` : escapeHtml(r.sub);
+        return `<li class="search__item search__item--recent" role="option" data-recent="${i}">
+          <span class="ico">${r.kind === "station" ? BOLT : CLOCK}</span>
+          <div><b>${escapeHtml(r.label)}</b><small>${sub}</small></div>
+          <button type="button" class="search__del" data-del="${i}" aria-label="Remove ${escapeHtml(r.label)} from recent searches">${CLOSE}</button>
+        </li>`;
+      })
+      .join("");
+  searchResults.hidden = false;
+  searchInput.setAttribute("aria-expanded", "true");
+  topbarEl.classList.add("is-searching"); // dropdown floats above the sheet, focused or not
+  activeIdx = -1;
+}
+
+function goToPlace(p: { name: string; lat: number; lng: number }): void {
+  if (state.selected) closeDetail();
+  sheet.to("half");
+  cmap.flyTo([p.lng, p.lat], 15, sheet.heightFor("half") + 20);
+  toast(`Chargers near ${p.name}`);
+}
+
 let searchSeq = 0;
 let placeCtl: AbortController | null = null;
 let activeIdx = -1;
@@ -914,7 +987,7 @@ function runSearch(): void {
   const q = searchInput.value.trim();
   searchClear.hidden = !q;
   if (!q) {
-    hideResults();
+    renderRecents(); // empty box: offer recent searches instead
     return;
   }
   const seq = ++searchSeq;
@@ -927,7 +1000,7 @@ function runSearch(): void {
       placeCtl = new AbortController();
       try {
         const places = await searchPlaces(q, placeCtl.signal);
-        if (seq === searchSeq) renderResults(stations, places, q);
+        if (seq === searchSeq && !searchResults.hidden) addPlaceResults(places, q);
       } catch {
         /* network / aborted */
       }
@@ -935,16 +1008,22 @@ function runSearch(): void {
   }
 }
 
+function placesHtml(places: Place[]): string {
+  if (!places.length) return "";
+  return (
+    `<li class="search__group" role="presentation" data-g="places">Places</li>` +
+    places
+      .map(
+        (p, i) =>
+          `<li class="search__item" role="option" data-place="${i}"><span class="ico">${PIN}</span><div><b>${escapeHtml(p.name)}</b><small>${escapeHtml(p.address)}</small></div></li>`,
+      )
+      .join("")
+  );
+}
+
+/** Chargers render immediately; places (from OneMap) arrive later. */
 function renderResults(stations: StationVM[], places: Place[] | null, q: string): void {
   const items: string[] = [];
-  if (places?.length) {
-    items.push(`<li class="search__group" role="presentation">Places</li>`);
-    places.forEach((p, i) =>
-      items.push(
-        `<li class="search__item" role="option" data-place="${i}"><span class="ico">${PIN}</span><div><b>${escapeHtml(p.name)}</b><small>${escapeHtml(p.address)}</small></div></li>`,
-      ),
-    );
-  }
   if (stations.length) {
     items.push(`<li class="search__group" role="presentation">Chargers</li>`);
     stations.forEach((s) =>
@@ -953,37 +1032,67 @@ function renderResults(stations: StationVM[], places: Place[] | null, q: string)
       ),
     );
   }
-  if (!items.length) items.push(`<li class="search__empty">${places === null ? "Searching…" : `No results for “${escapeHtml(q)}”`}</li>`);
-  searchResults.innerHTML = items.join("");
+  if (!items.length && !places?.length) items.push(`<li class="search__empty">${places === null ? "Searching…" : `No results for “${escapeHtml(q)}”`}</li>`);
+  searchResults.innerHTML = items.join("") + placesHtml(places ?? []);
   (searchResults as HTMLElement & { _places?: Place[] })._places = places ?? [];
   searchResults.hidden = false;
   searchInput.setAttribute("aria-expanded", "true");
+  topbarEl.classList.add("is-searching"); // dropdown floats above the sheet, focused or not
   activeIdx = -1;
+}
+
+/**
+ * Appends place results below the charger rows already on screen, without
+ * re-creating or moving them — a tap that lands while places arrive still counts.
+ */
+function addPlaceResults(places: Place[], q: string): void {
+  searchResults.querySelectorAll('[data-g="places"], [data-place], .search__empty').forEach((el) => el.remove());
+  (searchResults as HTMLElement & { _places?: Place[] })._places = places;
+  if (places.length) searchResults.insertAdjacentHTML("beforeend", placesHtml(places));
+  else if (!searchResults.querySelector("[data-id]")) searchResults.innerHTML = `<li class="search__empty">No results for “${escapeHtml(q)}”</li>`;
+  const active = searchResults.querySelector<HTMLElement>('.search__item[aria-selected="true"]');
+  activeIdx = active ? [...searchResults.querySelectorAll(".search__item")].indexOf(active) : -1;
 }
 
 function hideResults(): void {
   searchResults.hidden = true;
   searchInput.setAttribute("aria-expanded", "false");
+  topbarEl.classList.remove("is-searching");
 }
 
 function pickResult(li: HTMLElement): void {
   hideResults();
   searchInput.blur();
-  if (li.dataset.id) {
+  // Clear the box so the next tap on it offers recent searches.
+  searchInput.value = "";
+  searchClear.hidden = true;
+  if (li.dataset.recent !== undefined) {
+    const r = recents[Number(li.dataset.recent)];
+    if (!r) return;
+    addRecent(r); // bump to the top
+    if (r.kind === "place") goToPlace({ name: r.label, lat: r.lat, lng: r.lng });
+    else if (state.byId.has(r.id)) openDetail(r.id, { fly: true });
+    else toast("That charger isn't in today's data.");
+  } else if (li.dataset.id) {
+    const st = state.byId.get(li.dataset.id);
+    if (st) addRecent({ kind: "station", id: st.id, label: st.name, sub: st.address || st.postal });
     openDetail(li.dataset.id, { fly: true });
   } else if (li.dataset.place) {
     const p = (searchResults as HTMLElement & { _places?: Place[] })._places?.[Number(li.dataset.place)];
     if (!p) return;
-    if (state.selected) closeDetail();
-    sheet.to("half");
-    cmap.flyTo([p.lng, p.lat], 15, sheet.heightFor("half") + 20, 30);
-    toast(`Chargers near ${p.name}`);
+    addRecent({ kind: "place", label: p.name, sub: p.address, lat: p.lat, lng: p.lng });
+    goToPlace(p);
   }
 }
 
 searchInput.addEventListener("input", runSearch);
 searchInput.addEventListener("focus", () => {
   if (searchInput.value.trim()) runSearch();
+  else renderRecents();
+});
+// Keep the search box focused when tapping the dropdown's own buttons (✕ / Clear).
+searchResults.addEventListener("pointerdown", (e) => {
+  if ((e.target as HTMLElement).closest("button")) e.preventDefault();
 });
 searchInput.addEventListener("keydown", (e) => {
   const opts = [...searchResults.querySelectorAll<HTMLElement>(".search__item")];
@@ -1002,14 +1111,32 @@ searchInput.addEventListener("keydown", (e) => {
   }
 });
 searchResults.addEventListener("click", (e) => {
-  const li = (e.target as HTMLElement).closest<HTMLElement>(".search__item");
+  const t = e.target as HTMLElement;
+  const del = t.closest<HTMLElement>("[data-del]");
+  if (del) {
+    e.stopPropagation();
+    removeRecent(Number(del.dataset.del));
+    haptic(6);
+    renderRecents();
+    searchInput.focus();
+    return;
+  }
+  if (t.closest("[data-clear-recents]")) {
+    recents = [];
+    store.set("recents", recents);
+    haptic(6);
+    hideResults();
+    searchInput.focus();
+    return;
+  }
+  const li = t.closest<HTMLElement>(".search__item");
   if (li) pickResult(li);
 });
 searchClear.addEventListener("click", () => {
   searchInput.value = "";
   searchClear.hidden = true;
-  hideResults();
   searchInput.focus();
+  renderRecents();
 });
 
 // ── Location ────────────────────────────────────────────────────────────

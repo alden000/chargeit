@@ -263,7 +263,8 @@ svg {
 .topbar > * {
   pointer-events: auto;
 }
-.topbar:focus-within {
+.topbar:focus-within,
+.topbar.is-searching {
   z-index: 30; /* search results float above the sheet */
 }
 .topbar__row {
@@ -2304,4 +2305,50 @@ svg {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+/* Recent searches */
+.search__group--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.search__clearall {
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--volt);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+.search__item--recent .ico svg {
+  stroke: currentColor;
+}
+.search__del {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin: -6px -6px -6px auto;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--muted);
+}
+.search__del:hover,
+.search__del:focus-visible {
+  color: var(--ember);
+  background: var(--ink-800);
+}
+.search__del svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.search__item--recent > div {
+  flex: 1;
 }

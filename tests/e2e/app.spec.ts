@@ -408,3 +408,85 @@ test("picking a searched place centres the map even if the keyboard closing resi
     )
     .toBe(true);
 });
+
+test("map stays flat and north-up: no tilt, no rotation", async ({ page, api: _ }) => {
+  await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+  await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+  await page.waitForTimeout(2500); // let the fly-in finish
+  const cam = () =>
+    page.evaluate(() => {
+      const m = (window as unknown as { __chargeit: { cmap: { map: { getPitch(): number; getBearing(): number; dragRotate: { isEnabled(): boolean } } } } }).__chargeit.cmap.map;
+      return { pitch: m.getPitch(), bearing: m.getBearing(), rotate: m.dragRotate.isEnabled() };
+    });
+  expect(await cam()).toEqual({ pitch: 0, bearing: 0, rotate: false });
+  // A right-drag (desktop rotate/tilt gesture) must not change anything.
+  await page.mouse.move(200, 300);
+  await page.mouse.down({ button: "right" });
+  await page.mouse.move(280, 220, { steps: 6 });
+  await page.mouse.up({ button: "right" });
+  expect(await cam()).toEqual({ pitch: 0, bearing: 0, rotate: false });
+});
+
+test.describe("recent searches", () => {
+  const pickCharger = async (page: import("@playwright/test").Page, q: string) => {
+    await page.locator("#search").fill(q);
+    await page.locator(".search__item[data-id]").first().click();
+    await expect(page.locator("#view-detail")).toBeVisible();
+  };
+
+  test("remembers picks, shows them on focus, deletes one, clears all", async ({ page, api: _ }) => {
+    await page.goto("/");
+    await ready(page);
+    await pickCharger(page, "clarke quay");
+    await page.locator("#search").fill("bishan");
+    await page.locator(".search__item[data-place]").first().click();
+    await expect(page.locator("#search")).toHaveValue(""); // cleared after a pick
+
+    await page.locator("#search").click();
+    const items = page.locator(".search__item--recent");
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(0)).toContainText("Bishan MRT Station"); // most recent first
+    await expect(items.nth(1)).toContainText("Clarke Quay");
+    await expect(items.nth(1)).toContainText(/free|in use|Out of service/); // live availability
+
+    await page.getByRole("button", { name: "Remove Bishan MRT Station from recent searches" }).click();
+    await expect(items).toHaveCount(1);
+    await expect(page.locator("#search")).toBeFocused();
+
+    // Persisted; picking a recent re-opens it.
+    await page.reload();
+    await ready(page);
+    await page.locator("#search").click();
+    await expect(items).toHaveCount(1);
+    await items.first().click();
+    await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+
+    await page.locator("#search").click();
+    await page.getByRole("button", { name: "Clear" }).first().click();
+    await expect(page.locator("#search-results")).toBeHidden();
+    expect(await page.evaluate(() => localStorage.getItem("chargeit:recents"))).toBe("[]");
+  });
+
+  test("keeps only the last 5 and ignores tampered storage", async ({ page, api: _ }) => {
+    await page.addInitScript(() =>
+      localStorage.setItem(
+        "chargeit:recents",
+        JSON.stringify([{ kind: "place", label: "<img src=x onerror=window.__x=1>", sub: "", lat: "nope", lng: 1 }, { kind: "evil" }, 42]),
+      ),
+    );
+    await page.goto("/");
+    await ready(page);
+    await page.locator("#search").click();
+    await expect(page.locator(".search__item--recent")).toHaveCount(0);
+    for (const q of ["clarke quay", "plaza singapura", "the cathay", "bishan", "orchard", "marina"]) {
+      await page.locator("#search").fill(q);
+      const first = page.locator(".search__item[data-id]").first();
+      if (!(await first.count())) continue;
+      await first.click();
+      await expect(page.locator("#view-detail")).toBeVisible();
+    }
+    await page.locator("#search").click();
+    expect(await page.locator(".search__item--recent").count()).toBeLessThanOrEqual(5);
+    expect(await page.evaluate(() => (window as unknown as { __x?: number }).__x)).toBeUndefined();
+  });
+});

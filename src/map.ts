@@ -1,4 +1,4 @@
-import { Map as MLMap, Marker, setWorkerUrl, type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
+import { Map as MLMap, Marker, setWorkerUrl, type ExpressionSpecification, type GeoJSONSource, type StyleSpecification } from "maplibre-gl";
 // MapLibre resolves its web worker relative to its own module, which a bundler
 // moves; hand it the emitted URL explicitly instead.
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
@@ -39,6 +39,9 @@ interface Palette {
   motorway: string;
   rail: string;
   label: string;
+  roadLabel: string;
+  blockLabel: string;
+  placeLabel: string;
   halo: string;
   waterLabel: string;
   boundary: string;
@@ -59,6 +62,9 @@ const PALETTES: Record<Theme, Palette> = {
     motorway: "#283A62",
     rail: "#18223D",
     label: "#6F80A6",
+    roadLabel: "#93A3C6",
+    blockLabel: "#7C8FB8",
+    placeLabel: "#A9B6D3",
     halo: "#070B16",
     waterLabel: "#3D5A8C",
     boundary: "#2A3756",
@@ -77,6 +83,9 @@ const PALETTES: Record<Theme, Palette> = {
     motorway: "#FFFFFF",
     rail: "#D5DCE8",
     label: "#5B6785",
+    roadLabel: "#4A5672",
+    blockLabel: "#6B7894",
+    placeLabel: "#3A4560",
     halo: "#FFFFFF",
     waterLabel: "#6B8CB8",
     boundary: "#B8C2D6",
@@ -115,23 +124,72 @@ function restyle(style: StyleSpecification, theme: Theme): StyleSpecification {
       set(l, "text-halo-color", c.halo);
     }
   }
-  // Subtle 3D buildings when zoomed in and tilted.
+  // Extra street-level detail the base style leaves out: block / house numbers
+  // and named places (malls, schools, car parks, MRT stations…), plus clearer
+  // road names. All come from the same OpenMapTiles vector source.
   const vector = Object.entries(style.sources).find(([, s]) => s.type === "vector")?.[0];
-  if (vector && !style.layers.some((l) => l.id === "ci-3d")) {
-    const firstSymbol = style.layers.findIndex((l) => l.type === "symbol");
-    style.layers.splice(firstSymbol < 0 ? style.layers.length : firstSymbol, 0, {
-      id: "ci-3d",
-      type: "fill-extrusion",
-      source: vector,
-      "source-layer": "building",
-      minzoom: 15,
-      paint: {
-        "fill-extrusion-color": c.extrude,
-        "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 15, 0, 16, ["coalesce", ["get", "render_height"], 10]],
-        "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-        "fill-extrusion-opacity": 0.85,
+  if (vector && !style.layers.some((l) => l.id.startsWith("ci-"))) {
+    const name: ExpressionSpecification = ["coalesce", ["get", "name:en"], ["get", "name:latin"], ["get", "name"]];
+    const halo = { "text-halo-color": c.halo, "text-halo-width": 1.4, "text-halo-blur": 0.4 };
+    style.layers.push(
+      {
+        id: "ci-road-names",
+        type: "symbol",
+        source: vector,
+        "source-layer": "transportation_name",
+        minzoom: 14,
+        layout: {
+          "symbol-placement": "line",
+          "text-field": name,
+          "text-font": ["Noto Sans Regular"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 14, 10.5, 18, 13.5],
+          "text-letter-spacing": 0.02,
+          "symbol-spacing": 280,
+          "text-max-angle": 30,
+        },
+        paint: { "text-color": c.roadLabel, ...halo },
       },
-    });
+      {
+        id: "ci-housenumbers",
+        type: "symbol",
+        source: vector,
+        "source-layer": "housenumber",
+        minzoom: 16,
+        layout: {
+          "text-field": ["get", "housenumber"],
+          "text-font": ["Noto Sans Bold"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 16, 10, 18, 13],
+          "text-padding": 2,
+        },
+        paint: { "text-color": c.blockLabel, ...halo },
+      },
+      {
+        id: "ci-places",
+        type: "symbol",
+        source: vector,
+        "source-layer": "poi",
+        minzoom: 15,
+        // Most notable places first; everything named once zoomed right in.
+        filter: ["any", ["<=", ["coalesce", ["get", "rank"], 99], 12], [">=", ["zoom"], 16.5]],
+        layout: {
+          "text-field": name,
+          "text-font": ["Noto Sans Regular"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 15, 10.5, 18, 12.5],
+          "text-max-width": 8,
+          "text-optional": true,
+          "symbol-sort-key": ["coalesce", ["get", "rank"], 99],
+          "text-variable-anchor": ["top", "bottom", "left", "right"],
+          "text-radial-offset": 0.4,
+        },
+        paint: { "text-color": c.placeLabel, ...halo },
+      },
+    );
+    // Hide the base style's dimmer road-name layers so names aren't drawn twice.
+    for (const l of style.layers) {
+      if (l.type === "symbol" && /highway.?name|road.?name/.test(l.id) && !l.id.startsWith("ci-")) {
+        (l as { layout?: Record<string, unknown> }).layout = { ...((l as { layout?: Record<string, unknown> }).layout ?? {}), visibility: "none" };
+      }
+    }
   }
   return style;
 }
@@ -192,11 +250,17 @@ export class ChargeMap {
       maxZoom: 19,
       maxBounds: SG_BOUNDS,
       attributionControl: { compact: true },
-      dragRotate: true,
-      pitchWithRotate: true,
+      // Flat and north-up: no tilt, no rotation, from any gesture.
+      pitch: 0,
+      bearing: 0,
+      maxPitch: 0,
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
       fadeDuration: 150,
     });
-    this.map.touchZoomRotate.enableRotation();
+    this.map.touchZoomRotate.disableRotation();
+    this.map.keyboard.disableRotation();
     // On wide screens the list floats over the left of the map; keep the camera centred in the open area.
     const pad = () => this.map.setPadding(window.innerWidth >= 820 ? { left: 440, top: 0, right: 0, bottom: 0 } : { left: 0, top: 0, right: 0, bottom: 0 });
     pad();
@@ -466,10 +530,11 @@ export class ChargeMap {
     if (window.innerWidth >= 820) Object.assign(padding, { left: 440, bottom: 0, top: 0 });
     // Note: MapLibre persists camera padding after flyTo, which is what we want here.
     if (reducedMotion()) {
-      this.map.jumpTo({ center, zoom, padding, pitch: pitch ?? this.map.getPitch() });
+      this.map.jumpTo({ center, zoom, padding, pitch: 0, bearing: 0 });
       return;
     }
-    this.map.flyTo({ center, zoom, padding, pitch: pitch ?? this.map.getPitch(), speed: 1.4, curve: 1.5, essential: true });
+    void pitch; // the map is always flat; kept in the signature for callers
+    this.map.flyTo({ center, zoom, padding, pitch: 0, bearing: 0, speed: 1.4, curve: 1.5, essential: true });
   }
 
   private atPendingTarget(): boolean {
