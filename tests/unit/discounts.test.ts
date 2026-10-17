@@ -79,3 +79,46 @@ describe("price filter", () => {
     expect(bestKwhPrice(mk("y", 0.7), {})).toBe(0.7);
   });
 });
+
+import { plugFilter, tierLabel } from "../../src/model.ts";
+
+describe("filters match per charger, not per site", () => {
+  // Koufu-like site: cheap 22 kW AC, pricier DC — the user's reported case.
+  const site: Station = {
+    id: "mixed", name: "Mixed", address: "", postal: "", lat: 1.3, lng: 103.8,
+    points: [
+      { operator: "SP MOBILITY PTE. LTD.", position: "", hours: "", plugs: [{ type: "Type 2", current: "AC", kw: 22, price: 0.7, priceType: "kWh", connectors: [{ id: "a", s: 1 }] }] },
+      { operator: "SP MOBILITY PTE. LTD.", position: "", hours: "", plugs: [{ type: "CCS2", current: "DC", kw: 60, price: 0.7625, priceType: "kWh", connectors: [{ id: "b", s: 0 }] }] },
+    ],
+  };
+  const [vm] = toViewModels({ v: 1, feedUpdated: null, fetchedAt: "", stations: [site] });
+  const sp = { "SP Mobility": 20 }; // AC → $0.56, DC → $0.61
+  const ok = (f: Partial<typeof DEFAULT_FILTERS>) => matchesFilters(vm, { ...DEFAULT_FILTERS, ...f }, new Set(), sp);
+
+  it("DC + price needs one DC charger within price", () => {
+    expect(ok({ maxPrice: 0.56 })).toBe(true); // the AC charger qualifies
+    expect(ok({ dc: true })).toBe(true);
+    expect(ok({ dc: true, maxPrice: 0.56 })).toBe(false);
+    expect(ok({ dc: true, maxPrice: 0.61 })).toBe(true);
+  });
+
+  it("speed and free-now are per charger too", () => {
+    expect(ok({ minKw: 50, maxPrice: 0.56 })).toBe(false);
+    expect(ok({ freeNow: true })).toBe(true); // AC is free
+    expect(ok({ freeNow: true, dc: true })).toBe(false); // DC is busy
+  });
+
+  it("prices shown come from matching chargers", () => {
+    expect(bestKwhPrice(vm, sp)).toBeCloseTo(0.56);
+    expect(bestKwhPrice(vm, sp, plugFilter({ ...DEFAULT_FILTERS, dc: true }, sp))).toBeCloseTo(0.61);
+    expect(bestPrice(vm, sp, plugFilter({ ...DEFAULT_FILTERS, dc: true }, sp))!.price).toBeCloseTo(0.61);
+    expect(plugFilter(DEFAULT_FILTERS)).toBeUndefined();
+  });
+
+  it("22 kW AC reads Standard, not Fast", () => {
+    expect(tierLabel(2)).toBe("Standard");
+    expect(tierLabel(2, true)).toBe("Fast");
+    expect(tierLabel(3)).toBe("Rapid");
+    expect(tierLabel(1)).toBe("Slow");
+  });
+});

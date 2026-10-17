@@ -22,6 +22,8 @@ import {
   toViewModels,
   bestKwhPrice,
   bestPrice,
+  plugFilter,
+  plugFiltersActive,
   primaryOperator,
   clampPct,
   money,
@@ -327,8 +329,10 @@ function renderList(force = false): void {
   const inView = state.filtered.filter((s) => visible.has(s.id));
   const pool = inView.length ? inView : state.filtered;
   const cheap = state.sort === "cheap";
+  // With charger filters on, prices come from the chargers that match them.
+  const matching = plugFilter(state.filters, state.discounts);
   const sorted = pool
-    .map((s) => ({ s, d: distanceM(a, s), p: cheap ? bestKwhPrice(s, state.discounts) : null }))
+    .map((s) => ({ s, d: distanceM(a, s), p: cheap ? bestKwhPrice(s, state.discounts, matching) : null }))
     // Cheapest: by what the user pays per kWh (free first), unlisted last, ties by distance.
     .sort((x, y) => (cheap ? (x.p ?? Infinity) - (y.p ?? Infinity) || x.d - y.d : x.d - y.d))
     .slice(0, LIST_LIMIT);
@@ -379,7 +383,7 @@ function renderList(force = false): void {
       const ops = s.sum.operators.map(operatorInfo);
       const op = ops.find((o) => state.filters.operators.includes(o.name)) ?? ops[0] ?? operatorInfo("");
       const more = s.sum.operators.length > 1 ? ` +${s.sum.operators.length - 1}` : "";
-      const bp = bestPrice(s, state.discounts);
+      const bp = bestPrice(s, state.discounts, matching);
       const price = !bp
         ? ""
         : bp.price === 0
@@ -492,10 +496,17 @@ function providersHtml(ops: ReturnType<typeof operatorInfo>[]): string {
     .join("")}</ul>`;
 }
 
-function priceTile(bp: EffectivePrice | null, attrs: string): string {
+/** Is the station's fastest charger DC? (decides "Fast" vs "Standard" wording) */
+function maxIsDc(st: StationVM): boolean {
+  let best: { kw: number; dc: boolean } = { kw: -1, dc: false };
+  for (const pt of st.points) for (const pl of pt.plugs) if ((pl.kw ?? 0) > best.kw) best = { kw: pl.kw ?? 0, dc: pl.current === "DC" };
+  return best.dc;
+}
+
+function priceTile(bp: EffectivePrice | null, attrs: string, filtered = false): string {
   if (!bp) return `<div class="tile" ${attrs}><b class="num">–</b><span>Price</span></div>`;
   if (bp.price === 0) return `<div class="tile" ${attrs}><b class="num avail--free">Free</b><span>Price</span></div>`;
-  if (!bp.pct) return `<div class="tile" ${attrs}><b class="num">${money(bp.price)}</b><span>From /${escapeHtml(bp.unit)}</span></div>`;
+  if (!bp.pct) return `<div class="tile" ${attrs}><b class="num">${money(bp.price)}</b><span>${filtered ? "Matching" : "From"} /${escapeHtml(bp.unit)}</span></div>`;
   return `<div class="tile tile--deal" ${attrs}><b class="num">${money(bp.price)}</b><span><s>${money(bp.original)}</s> <em class="deal">−${bp.pct}%</em></span></div>`;
 }
 
@@ -550,8 +561,8 @@ function renderDetail(id: string, animate: boolean): void {
     </div>
     <div class="detail__summary">
       <div class="tile" ${anim(0)}><b class="num avail--${s.state}">${s.state === "offline" ? "–" : `${s.free}<small style="font-size:13px;color:var(--muted)">/${s.free + s.busy}</small>`}</b><span>Free now</span></div>
-      <div class="tile" ${anim(1)}><b class="num">${formatKw(s.maxKw).replace(" kW", "")}<small style="font-size:13px;color:var(--muted)"> kW</small></b><span>${tierLabel(s.tier)} ${boltsHtml(s.tier)}</span></div>
-      ${priceTile(bestPrice(st, state.discounts), anim(2))}
+      <div class="tile" ${anim(1)}><b class="num">${formatKw(s.maxKw).replace(" kW", "")}<small style="font-size:13px;color:var(--muted)"> kW</small></b><span>${tierLabel(s.tier, maxIsDc(st))} ${boltsHtml(s.tier)}</span></div>
+      ${priceTile(bestPrice(st, state.discounts, plugFilter(state.filters, state.discounts)) ?? bestPrice(st, state.discounts), anim(2), plugFiltersActive(state.filters))}
     </div>
     <div class="detail__cta">
       <button type="button" class="btn btn--primary" data-act="nav">${NAV}Directions</button>
