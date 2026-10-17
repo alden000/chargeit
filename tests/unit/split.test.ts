@@ -46,4 +46,15 @@ describe("stations/status split", () => {
     moved[0].points[0].plugs[0].connectors.push({ id: "9", s: 1 });
     expect(layoutKey(moved)).not.toBe(layoutKey(full.stations));
   });
+
+  it("regrouping the same connectors (LTA splits a plug by price) keeps the layout and the status", () => {
+    const regrouped = structuredClone(full.stations);
+    const [pt] = regrouped[0].points;
+    const ac = pt.plugs[0];
+    pt.plugs = [{ ...ac, connectors: [ac.connectors[1]] }, pt.plugs[1], { ...ac, price: 0.45, connectors: [ac.connectors[0]] }];
+    expect(layoutKey(regrouped)).toBe(layoutKey(full.stations));
+    expect(statusString(regrouped)).toBe(statusString(full.stations));
+    const st = { v: 1 as const, sv: "x", cv: "c", stations: JSON.parse(stripStatusJson(JSON.stringify(regrouped))) };
+    expect(applyStatus(st, status)?.stations[0].points[0].plugs[2].connectors[0]).toEqual({ id: "1", s: 1 });
+  });
 });

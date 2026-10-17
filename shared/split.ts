@@ -12,10 +12,12 @@
  *   cv — its full content. LTA flips names/coordinates of some sites between
  *        snapshots, so this changes often; the app picks it up at most hourly.
  *
- * Connectors are visited in the same order on both sides: stations → points →
- * plugs → connectors (normalizeBatch sorts all of them).
+ * Connectors are matched site by site in connector-id order, not by where they
+ * sit in the points/plugs tree: LTA regroups the same connectors between
+ * snapshots (e.g. one plug with two connectors ↔ two plugs at different
+ * prices), which must not count as a layout change.
  */
-import type { ChargersPayload, Station } from "./schema";
+import type { ChargersPayload, Connector, Station } from "./schema";
 
 export interface StationsPayload {
   v: 1;
@@ -34,17 +36,19 @@ export interface StatusPayload {
   s: string;
 }
 
-/** What `sv` hashes: site ids and their connector ids, in order. */
+/** A site's connectors in the canonical order the status string uses: by id (stable sort). */
+function ordered<C extends Connector>(st: { points: { plugs: { connectors: C[] }[] }[] }): C[] {
+  const all = st.points.flatMap((pt) => pt.plugs.flatMap((pl) => pl.connectors));
+  return all.map((c, i) => [c, i] as const).sort(([a, i], [b, j]) => (a.id < b.id ? -1 : a.id > b.id ? 1 : i - j)).map(([c]) => c);
+}
+
+/** What `sv` hashes: site ids and their connector ids, in status order. */
 export function layoutKey(stations: readonly Station[]): string {
-  const out: string[] = [];
-  for (const st of stations) out.push(`${st.id}:${st.points.map((pt) => pt.plugs.map((pl) => pl.connectors.map((c) => c.id).join(",")).join("|")).join("/")}`);
-  return out.join(";");
+  return stations.map((st) => `${st.id}:${ordered(st).map((c) => c.id).join(",")}`).join(";");
 }
 
 export function statusString(stations: readonly Station[]): string {
-  const out: string[] = [];
-  for (const st of stations) for (const pt of st.points) for (const pl of pt.plugs) for (const c of pl.connectors) out.push(c.s === 1 ? "1" : c.s === 0 ? "0" : "-");
-  return out.join("");
+  return stations.map((st) => ordered(st).map((c) => (c.s === 1 ? "1" : c.s === 0 ? "0" : "-")).join("")).join("");
 }
 
 /**
@@ -64,19 +68,15 @@ export function applyStatus(stations: StationsPayload, status: StatusPayload): C
   const s = status.s;
   const out: Station[] = [];
   for (const st of stations.stations) {
-    out.push({
+    const copy: Station = {
       ...st,
-      points: st.points.map((pt) => ({
-        ...pt,
-        plugs: pt.plugs.map((pl) => ({
-          ...pl,
-          connectors: pl.connectors.map((c) => {
-            const ch = s[i++];
-            return { id: c.id, s: ch === "1" ? 1 : ch === "0" ? 0 : null };
-          }),
-        })),
-      })),
-    });
+      points: st.points.map((pt) => ({ ...pt, plugs: pt.plugs.map((pl) => ({ ...pl, connectors: pl.connectors.map((c) => ({ id: c.id, s: null })) })) })),
+    };
+    for (const c of ordered(copy)) {
+      const ch = s[i++];
+      c.s = ch === "1" ? 1 : ch === "0" ? 0 : null;
+    }
+    out.push(copy);
   }
   if (i !== s.length) return null;
   return { v: 1, feedUpdated: status.feedUpdated, fetchedAt: status.fetchedAt, stations: out };
