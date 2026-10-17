@@ -58,7 +58,7 @@ test.describe("ChargeIt core journeys", () => {
     await expect(gmaps).toHaveAttribute("href", new RegExp(`destination=${clarke.lat},${clarke.lng}`));
     await expect(page.getByRole("link", { name: "Waze" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Close" }).click();
+    await page.getByRole("button", { name: "Close", exact: true }).click();
     await expect(page.locator("#view-detail")).toBeHidden();
     await expect(page.locator("#view-list")).toBeVisible();
     expect(page.url()).not.toContain("#s=");
@@ -95,7 +95,7 @@ test.describe("ChargeIt core journeys", () => {
     await expect(fav).toHaveAttribute("aria-pressed", "false");
     await fav.click();
     await expect(fav).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "Close" }).click();
+    await page.getByRole("button", { name: "Close", exact: true }).click();
     await page.locator('[data-f="favourites"]').click();
     await expect(page.locator(".card")).toHaveCount(1);
     await expect(page.locator(".card .card__name")).toContainText("Clarke Quay");
@@ -288,7 +288,7 @@ test("station detail names the provider's app and links the right store", async 
 test("map pins show the provider; filtering a provider puts its logo on the pins", async ({ page, api: _ }) => {
   await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
   await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
-  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   // Zoomed in on a station: individual pins carry a provider badge and name it for screen readers.
   await expect(page.locator(".pin-host .pin__op").first()).toBeVisible();
   await expect(page.locator('.pin-host[aria-label^="Clarke Quay, SP Mobility"]')).toHaveCount(1);
@@ -307,7 +307,7 @@ test("discounted providers are highlighted on the map, others fade; the switch t
   await page.addInitScript(() => localStorage.setItem("chargeit:discounts", JSON.stringify({ "SP Mobility": 15 })));
   await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
   await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
-  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   // Clarke Quay is SP: highlighted with SP's badge.
   const clarkePin = page.locator('.pin-host[aria-label^="Clarke Quay, "] .pin');
   await expect(clarkePin).toHaveClass(/is-mine/);

@@ -317,8 +317,9 @@ export class ChargeMap {
         type: "geojson",
         data: this.geojson(),
         cluster: true,
-        clusterMaxZoom: 14,
-        clusterRadius: 58,
+        // Street level (z14+) always shows every site; group only pins that would overlap.
+        clusterMaxZoom: 13,
+        clusterRadius: 46,
         clusterProperties: {
           free: ["+", ["get", "free"]],
           busy: ["+", ["get", "busy"]],
