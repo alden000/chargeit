@@ -586,3 +586,88 @@ test("charger history unavailable: the station screen works as before", async ({
   await expect(page.locator(".bh")).toHaveCount(0);
   expect(api.calls()).toBeGreaterThan(0);
 });
+
+test.describe("charger alerts", () => {
+  async function mockAlerts(page: import("@playwright/test").Page) {
+    const posts: Array<Record<string, unknown>> = [];
+    const deletes: string[] = [];
+    let n = 0;
+    await page.addInitScript(() => {
+      const fake = {
+        endpoint: "https://fcm.googleapis.com/fcm/send/test",
+        toJSON: () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/test", keys: { p256dh: "BTest", auth: "aTest" } }),
+      };
+      PushManager.prototype.getSubscription = async () => null;
+      PushManager.prototype.subscribe = async () => fake as unknown as PushSubscription;
+    });
+    await page.route("**/v1/push/key", (r) => r.fulfill({ contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ key: "B" + "A".repeat(86) }) }));
+    await page.route("**/v1/watch*", async (r) => {
+      const req = r.request();
+      const h = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS" };
+      if (req.method() === "OPTIONS") return r.fulfill({ status: 204, headers: h });
+      if (req.method() === "POST") {
+        posts.push(JSON.parse(req.postData() ?? "{}"));
+        return r.fulfill({ status: 201, contentType: "application/json", headers: h, body: JSON.stringify({ id: `watch-id-000000000${++n}`, expires: Date.now() + 2 * 3600_000 }) });
+      }
+      if (req.method() === "DELETE") {
+        deletes.push(new URL(req.url()).searchParams.get("id") ?? "");
+        return r.fulfill({ contentType: "application/json", headers: h, body: '{"ok":true}' });
+      }
+      const ids = (new URL(req.url()).searchParams.get("ids") ?? "").split(",").filter((id) => !deletes.includes(id));
+      return r.fulfill({ contentType: "application/json", headers: h, body: JSON.stringify({ active: ids }) });
+    });
+    return { posts, deletes };
+  }
+
+  test("set an alert for a whole car park, see it, stop it", async ({ page, context, api: _ }, info) => {
+    test.skip(info.project.name === "iphone", "iPhone Safari needs the app installed; covered below");
+    await context.grantPermissions(["notifications"]);
+    const { posts, deletes } = await mockAlerts(page);
+    await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+    await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+    await page.getByRole("button", { name: "Charger alerts" }).click();
+    const panel = page.locator(".alert-panel");
+    await expect(panel).toBeVisible();
+    await panel.getByRole("radio", { name: "A charger is taken" }).click();
+    await panel.getByRole("button", { name: "2 h" }).click();
+    await panel.getByRole("button", { name: "Start alert" }).click();
+    await expect(page.locator("#toast")).toContainText("Alert on: any charger is taken at Clarke Quay, for 2 h.");
+    expect(posts).toHaveLength(1);
+    const total = clarke.points.reduce((n, p) => n + p.plugs.reduce((m, pl) => m + pl.connectors.length, 0), 0);
+    expect(posts[0]).toMatchObject({ station: clarke.id, name: "Clarke Quay", event: 0, minutes: 120, once: true, subscription: { endpoint: "https://fcm.googleapis.com/fcm/send/test" } });
+    expect(posts[0].connectors).toHaveLength(total);
+    await expect(page.getByRole("button", { name: "Charger alerts" })).toHaveClass(/is-on/);
+    await expect(page.locator(".watching")).toContainText("Any charger is taken");
+
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page.locator("#watch-list")).toContainText("Clarke Quay");
+    await page.locator("#watch-list").getByRole("button", { name: "Stop" }).click();
+    await expect(page.locator("#watch-list")).toContainText("No alerts");
+    expect(deletes).toEqual(["watch-id-0000000001"]);
+  });
+
+  test("watch a single charger after tapping it", async ({ page, context, api: _ }, info) => {
+    test.skip(info.project.name === "iphone", "iPhone Safari needs the app installed");
+    await context.grantPermissions(["notifications"]);
+    const { posts } = await mockAlerts(page);
+    await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+    await page.locator("#view-detail button.cell").first().click();
+    await page.getByRole("button", { name: "Charger alerts" }).click();
+    const panel = page.locator(".alert-panel");
+    await expect(panel.getByRole("radio", { name: /^Lot / })).toHaveAttribute("aria-checked", "true");
+    await panel.getByRole("button", { name: "Stop after the first alert" }).click(); // keep alerting
+    await panel.getByRole("button", { name: "Start alert" }).click();
+    await expect(page.locator(".watching")).toContainText(/Lot .+ frees up/);
+    expect(posts[0].connectors).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ event: 1, minutes: 60, once: false });
+    expect(Object.keys(posts[0].labels as object)).toEqual(posts[0].connectors);
+  });
+
+  test("iPhone without Home Screen install explains how to get alerts", async ({ page, api: _ }, info) => {
+    test.skip(info.project.name !== "iphone", "iPhone only");
+    await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+    await page.getByRole("button", { name: "Charger alerts" }).click();
+    await expect(page.locator(".alert-panel__note")).toContainText("Add to Home Screen");
+    await expect(page.getByRole("button", { name: "Start alert" })).toBeDisabled();
+  });
+});

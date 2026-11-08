@@ -29,9 +29,17 @@ migrations_dir = "migrations"
 name = "CLOCK"
 class_name = "HistoryClock"
 
+[[durable_objects.bindings]]
+name = "SENDER"
+class_name = "PushSender"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["HistoryClock"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["PushSender"]
 
 [observability]
 enabled = true

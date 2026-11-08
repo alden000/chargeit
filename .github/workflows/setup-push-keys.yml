@@ -1,0 +1,42 @@
+name: Set up push alert keys
+
+# Manual only. Creates the Web Push (VAPID) key pair for charger alerts and
+# stores it as the Worker secret VAPID_JWK, straight from this job into
+# Cloudflare: it is never printed, committed or saved anywhere else. Does
+# nothing if the secret already exists (replacing it would stop existing
+# alerts until each phone sets them up again).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keys:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Create VAPID key pair if missing
+        working-directory: worker
+        run: |
+          set -euo pipefail
+          npm ci
+          if npx wrangler secret list 2>/dev/null | grep -q '"VAPID_JWK"'; then
+            echo "VAPID_JWK already exists; leaving it as is."
+            exit 0
+          fi
+          node -e '
+            crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])
+              .then((k) => crypto.subtle.exportKey("jwk", k.privateKey))
+              .then((jwk) => process.stdout.write(JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d })));
+          ' | npx wrangler secret put VAPID_JWK
+          echo "VAPID_JWK created."

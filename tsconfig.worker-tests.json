@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["./worker/node_modules/@cloudflare/workers-types"]
   },
-  "include": ["worker/src", "shared", "tests/unit/worker.test.ts", "tests/unit/history.test.ts"]
+  "include": ["worker/src", "shared", "tests/unit/worker.test.ts", "tests/unit/history.test.ts", "tests/unit/webpush.test.ts", "tests/unit/alerts.test.ts"]
 }

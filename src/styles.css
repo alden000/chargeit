@@ -1561,7 +1561,7 @@ svg {
 }
 .detail__cta {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
   margin-bottom: 18px;
 }
@@ -2588,6 +2588,185 @@ button.cell {
 }
 @media (prefers-reduced-motion: reduce) {
   .bh__bar {
+    animation: none;
+  }
+}
+
+/* ───────────────────────── Charger alerts ───────────────────────── */
+.btn svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.btn.is-on {
+  color: var(--volt-ink);
+  background: var(--volt);
+  border-color: var(--volt);
+}
+.btn--small {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.watching,
+.watches {
+  margin: -6px 0 16px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.watches {
+  margin: 0;
+}
+.watching li,
+.watches li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--volt) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--volt) 40%, transparent);
+}
+.watching svg,
+.watches svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--volt);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.watching span,
+.watches span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.watching b,
+.watches b {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watching small,
+.watches small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.watches .watches__empty {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 1px dashed var(--line);
+}
+.alert-panel {
+  display: grid;
+  gap: 10px;
+  margin: -6px 0 18px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--ink-800);
+  animation: rise 260ms var(--ease-out) both;
+}
+.alert-panel__h {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.alert-panel__hint,
+.alert-panel__fine {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.segmented--small {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  background: var(--ink-900);
+}
+.segmented--small button {
+  min-height: 36px;
+  font-size: 13px;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.segmented--small button[aria-checked="true"] {
+  background: var(--ink-700);
+}
+.alert-panel__row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+.chip--small {
+  height: 32px;
+  padding: 0;
+  justify-content: center;
+  font-size: 12.5px;
+}
+.alert-panel__once {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: start;
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--text);
+}
+.alert-panel__once i {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+}
+.alert-panel__once[aria-pressed="true"] i {
+  background: var(--volt);
+  border-color: var(--volt);
+}
+.alert-panel__once[aria-pressed="true"] i::after {
+  content: "";
+  width: 9px;
+  height: 5px;
+  border: solid var(--volt-ink);
+  border-width: 0 0 2px 2px;
+  transform: translateY(-1px) rotate(-45deg);
+}
+.alert-panel__note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
+.alert-panel__note.is-error {
+  background: color-mix(in srgb, var(--ember) 16%, transparent);
+}
+.alert-panel__go:disabled {
+  opacity: 0.5;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alert-panel {
     animation: none;
   }
 }

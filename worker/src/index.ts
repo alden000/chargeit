@@ -27,6 +27,8 @@ import type { ChargersPayload } from "../../shared/schema";
 import { nextFeedAt } from "../../shared/cadence";
 import { connectorIds, layoutKey, statusString, stripStatusJson } from "../../shared/split";
 import { readHistory, recordSnapshot, type RecordResult } from "./history";
+import { activeWatches, addWatch, alertOnChanges, parseWatch, removeWatch, type Alert } from "./alerts";
+import { loadVapid, sendPush, type Vapid } from "./webpush";
 
 export interface Env {
   LTA_ACCOUNT_KEY: string;
@@ -34,6 +36,10 @@ export interface Env {
   HISTORY?: D1Database;
   /** The HistoryClock Durable Object that records every snapshot on a timer. */
   CLOCK?: DurableObjectNamespace;
+  /** PushSender Durable Objects: each sends one batch of alert pushes. */
+  SENDER?: DurableObjectNamespace;
+  /** VAPID key pair for Web Push (P-256 private JWK). Secret, set by setup-push-keys.yml. */
+  VAPID_JWK?: string;
   /** Optional comma-separated override of the CORS allow-list. */
   ALLOWED_ORIGINS?: string;
 }
@@ -89,7 +95,8 @@ function allowedOrigins(env: Env): Set<string> {
 function corsHeaders(request: Request, env: Env): Record<string, string> {
   const origin = request.headers.get("Origin");
   const h: Record<string, string> = {
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Max-Age": "86400",
     "Access-Control-Expose-Headers": "X-Feed-Updated, X-Fetched-At, X-Stale, X-SV",
     Vary: "Origin",
@@ -264,7 +271,7 @@ async function getSnapshot(env: Env, ctx: ExecutionContext): Promise<Snapshot> {
       memo = { snap, until: freshUntil(snap) };
       const ttl = freshTtlSeconds(snap.feedUpdated, Date.now());
       ctx.waitUntil(Promise.all([writeCache(FRESH_KEY, snap, ttl), writeCache(STALE_KEY, snap, STALE_TTL)]));
-      if (env.HISTORY) ctx.waitUntil(recordFresh(env.HISTORY, snap).catch((e) => console.error("history record failed:", String(e))));
+      if (env.HISTORY) ctx.waitUntil(recordFresh(env, env.HISTORY, snap).catch((e) => console.error("history record failed:", String(e))));
       return snap;
     } catch (err) {
       lastFailureAt = Date.now();
@@ -287,11 +294,51 @@ export default {
     startClock(env, ctx);
 
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request, env) });
-    if (request.method !== "GET" && request.method !== "HEAD") {
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const writable = path === "/v1/watch" && (request.method === "POST" || request.method === "DELETE");
+    if (request.method !== "GET" && request.method !== "HEAD" && !writable) {
       return json(request, env, JSON.stringify({ error: "method_not_allowed" }), 405, { Allow: "GET, HEAD, OPTIONS" });
     }
 
-    const path = url.pathname.replace(/\/+$/, "") || "/";
+    if (path === "/v1/push/key") {
+      const vapid = await getVapid(env).catch(() => null);
+      if (!vapid) return json(request, env, JSON.stringify({ error: "push_unavailable" }), 503, { "Cache-Control": "no-store" });
+      return json(request, env, JSON.stringify({ key: vapid.publicKey }), 200, { "Cache-Control": "public, max-age=3600" });
+    }
+
+    if (path === "/v1/watch") {
+      if (!env.HISTORY) return json(request, env, JSON.stringify({ error: "alerts_unavailable" }), 503, { "Cache-Control": "no-store" });
+      const nowMin = Math.round(Date.now() / 60_000);
+      const noStore = { "Cache-Control": "no-store" };
+      try {
+        if (request.method === "POST") {
+          const text = await request.text();
+          if (text.length > 16_384) return json(request, env, JSON.stringify({ error: "too_large" }), 413, noStore);
+          let body: unknown;
+          try {
+            body = JSON.parse(text);
+          } catch {
+            return json(request, env, JSON.stringify({ error: "invalid JSON" }), 400, noStore);
+          }
+          const w = parseWatch(body);
+          if (typeof w === "string") return json(request, env, JSON.stringify({ error: w }), 400, noStore);
+          const out = await addWatch(env.HISTORY, w, nowMin);
+          if ("error" in out) return json(request, env, JSON.stringify(out), 429, noStore);
+          return json(request, env, JSON.stringify({ id: out.id, expires: out.expires * 60_000 }), 201, noStore);
+        }
+        if (request.method === "DELETE") {
+          const id = url.searchParams.get("id") ?? "";
+          if (!/^[A-Za-z0-9_-]{16,40}$/.test(id)) return json(request, env, JSON.stringify({ error: "bad_request" }), 400, noStore);
+          await removeWatch(env.HISTORY, id);
+          return json(request, env, JSON.stringify({ ok: true }), 200, noStore);
+        }
+        const ids = (url.searchParams.get("ids") ?? "").split(",").filter((id) => /^[A-Za-z0-9_-]{16,40}$/.test(id)).slice(0, 50);
+        return json(request, env, JSON.stringify({ active: await activeWatches(env.HISTORY, ids, nowMin) }), 200, noStore);
+      } catch (err) {
+        console.error("watch failed:", String(err));
+        return json(request, env, JSON.stringify({ error: "alerts_unavailable" }), 503, noStore);
+      }
+    }
 
     if (path === "/v1/chargers" || path === "/v1/status" || path === "/v1/stations") {
       try {
@@ -347,7 +394,7 @@ export default {
     }
 
     if (path === "/") {
-      return json(request, env, JSON.stringify({ name: "chargeit-lta-proxy", endpoints: ["/v1/status", "/v1/stations", "/v1/chargers", "/v1/history", "/health"] }));
+      return json(request, env, JSON.stringify({ name: "chargeit-lta-proxy", endpoints: ["/v1/status", "/v1/stations", "/v1/chargers", "/v1/history", "/v1/watch", "/v1/push/key", "/health"] }));
     }
 
     return json(request, env, JSON.stringify({ error: "not_found" }), 404);
@@ -356,13 +403,63 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 /** Outcome of the last recording attempt in this isolate, for /health. */
-let lastRecord: (RecordResult & { tried: string }) | { error: string; tried: string } | null = null;
+let lastRecord: Record<string, unknown> | null = null;
 
-async function recordFresh(db: D1Database, snap: Snapshot): Promise<RecordResult> {
+async function recordFresh(env: Env, db: D1Database, snap: Snapshot): Promise<RecordResult> {
   const status = (JSON.parse(snap.status) as { s: string }).s;
   const result = await recordSnapshot(db, JSON.parse(snap.ids) as string[], status, snap.feedUpdated);
-  lastRecord = { ...result, tried: new Date().toISOString() };
+  await afterRecord(env, result);
   return result;
+}
+
+/** Whoever records a snapshot first (timer or request) sends its alerts; the other finds it already recorded. */
+async function afterRecord(env: Env, result: RecordResult): Promise<void> {
+  const tried = new Date().toISOString();
+  if (!result.recorded) {
+    lastRecord = { ...result, tried };
+    return;
+  }
+  const { changed, ...summary } = result;
+  const alerts = await alertOnChanges(env, changed, result.at).catch((err) => {
+    console.error("alerts failed:", String(err));
+    return -1;
+  });
+  lastRecord = { ...summary, changed: changed.length, alerts, tried };
+}
+
+const PUSH_SUBJECT = "https://chargeit.wwweeeiii.com";
+let vapidMemo: Promise<Vapid> | null = null;
+function getVapid(env: Env): Promise<Vapid> {
+  if (!env.VAPID_JWK) return Promise.reject(new Error("VAPID_JWK not configured"));
+  vapidMemo ??= loadVapid(env.VAPID_JWK, PUSH_SUBJECT).catch((err) => {
+    vapidMemo = null;
+    throw err;
+  });
+  return vapidMemo;
+}
+
+/**
+ * Sends one batch of alert pushes (at most ~40, under the 50-subrequest limit
+ * of a single run). Returns the watch ids whose subscriptions are gone.
+ */
+export class PushSender {
+  constructor(
+    _state: DurableObjectState,
+    private env: Env,
+  ) {}
+
+  async fetch(request: Request): Promise<Response> {
+    const alerts = (await request.json()) as Alert[];
+    const vapid = await getVapid(this.env);
+    const gone: string[] = [];
+    let sent = 0;
+    for (const a of alerts.slice(0, 45)) {
+      const r = await sendPush(vapid, a, a.payload, { ttl: 900, topic: a.id });
+      if (r === "gone") gone.push(a.id);
+      else if (r === "sent") sent++;
+    }
+    return Response.json({ gone, sent });
+  }
 }
 
 let clockStarted = false;
@@ -409,6 +506,7 @@ export class HistoryClock {
       if (this.env.HISTORY) {
         const payload = await pullFromLta(this.env);
         const result = await recordSnapshot(this.env.HISTORY, connectorIds(payload.stations), statusString(payload.stations), payload.feedUpdated);
+        await afterRecord(this.env, result);
         // LTA running late (still the previous snapshot): look again in a minute, up to 3 minutes past the mark.
         const mark = now - (now % 300_000);
         const late = !payload.feedUpdated || Date.parse(payload.feedUpdated) < mark;

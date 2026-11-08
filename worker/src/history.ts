@@ -223,7 +223,16 @@ function toText(v: unknown): string {
 
 // ── D1 ──────────────────────────────────────────────────────────────────
 
-export type RecordResult = { recorded: false; reason: string } | { recorded: true; at: number; changes: number; connectors: number };
+export type RecordResult =
+  | { recorded: false; reason: string }
+  | {
+      recorded: true;
+      at: number;
+      changes: number;
+      connectors: number;
+      /** Connectors that changed state (not first sightings), with their new state: what alerts match on. */
+      changed: Array<[string, 0 | 1]>;
+    };
 
 /** Records one LTA snapshot (connector ids + status string in the same order). Idempotent per snapshot time. */
 export async function recordSnapshot(db: D1Database, ids: readonly string[], status: string, feedUpdated: string | null): Promise<RecordResult> {
@@ -258,7 +267,9 @@ export async function recordSnapshot(db: D1Database, ids: readonly string[], sta
   });
   const all = added.length ? [...known, ...added] : known;
   st = growState(st, all.length);
+  const prev = st.s.slice();
   const changes = applyStatus(st, index, status, now);
+  const changed = changes.filter(([k]) => prev[k] !== -1).map(([k, s]) => [all[k], s as 0 | 1] as [string, 0 | 1]);
 
   const slotNo = slotOf(now);
   const slotRow = await db.prepare("SELECT busy, seen FROM slots WHERE slot = ?").bind(slotNo).first<{ busy: unknown; seen: unknown }>();
@@ -277,7 +288,7 @@ export async function recordSnapshot(db: D1Database, ids: readonly string[], sta
   ];
   if (added.length) batch.unshift(db.prepare(upsertKv).bind("ids", JSON.stringify(all), now));
   await db.batch(batch);
-  return { recorded: true, at: now, changes: changes.length, connectors: all.length };
+  return { recorded: true, at: now, changes: changes.length, connectors: all.length, changed };
 }
 
 export interface ConnectorHistory {

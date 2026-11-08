@@ -5,7 +5,8 @@ import "./styles.css";
 
 import { loadChargers, loadDemo, loadHistory, searchPlaces, type DataMode, type Place, type StationHistory } from "./api.ts";
 import { DAYS, busiestWindow, chartHtml, clock, connectorStory, dayProfile, sgtParts, tileFacts } from "./history-view.ts";
-import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT } from "./icons.ts";
+import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT, BELL } from "./icons.ts";
+import { loadWatches, pushSupport, startWatch, stopWatch as stopAlertWatch, syncWatches, type AlertEvent, type LocalWatch } from "./alerts.ts";
 import { ChargeMap, SG_CENTER, type Theme } from "./map.ts";
 import {
   DEFAULT_FILTERS,
@@ -100,6 +101,9 @@ const state = {
   selected: null as string | null,
   /** Charger history per station: when it was fetched and what came back (null = unavailable). */
   history: new Map<string, { at: number; data: StationHistory | null }>(),
+  /** Charger alerts set on this device, and the station screen's alert form. */
+  watches: loadWatches(),
+  alertUi: { open: false, event: 1 as AlertEvent, one: false, minutes: 60, once: true, busy: false, error: "" },
   /** Busy-hours chart: which station, which connector (null = all) and which weekday. */
   histPick: { station: "", cid: null as string | null, day: sgtParts(Date.now()).day },
   loading: false,
@@ -562,7 +566,9 @@ function detailSig(st: StationVM): string {
   const h = state.history.get(st.id);
   // Durations tick every minute, so the minute is part of the signature once history is shown.
   const hist = h?.data ? `|${h.at}|${Math.floor(Date.now() / 60_000)}|${JSON.stringify(state.histPick)}` : "";
-  return JSON.stringify(st.points) + (state.favs.has(st.id) ? "*" : "") + JSON.stringify(state.discounts) + hist;
+  const ws = stationWatches(st.id);
+  const alerts = `|${JSON.stringify(state.alertUi)}|${ws.map((w) => w.id).join(",")}${ws.length ? `|${Math.floor(Date.now() / 60_000)}` : ""}`;
+  return JSON.stringify(st.points) + (state.favs.has(st.id) ? "*" : "") + JSON.stringify(state.discounts) + hist + alerts;
 }
 
 function connectorIdsOf(st: StationVM): string[] {
@@ -590,6 +596,126 @@ function historyStoryHtml(st: StationVM, cid: string, hist: StationHistory): str
   const lines = connectorStory(live.s, hist.connectors[cid], Date.now());
   const where = live.position ? `Lot ${live.position}` : `Charger ${cid.slice(-6)}`;
   return `<p class="story" aria-live="polite"><b>${escapeHtml(where)}</b> ${lines.length ? escapeHtml(lines.join(" ")) : "No history for this charger yet."}</p>`;
+}
+
+function stationWatches(id: string): LocalWatch[] {
+  const now = Date.now();
+  return state.watches.filter((w) => w.station === id && w.expires > now);
+}
+
+function watchText(w: Pick<LocalWatch, "what" | "event">): string {
+  return `${w.what === "any charger" ? "Any charger" : w.what[0].toUpperCase() + w.what.slice(1)} ${w.event === 1 ? "frees up" : "is taken"}`;
+}
+
+function minutesLeft(ms: number): string {
+  const m = Math.max(1, Math.round(ms / 60_000));
+  return m < 60 ? `${m} min left` : `${Math.floor(m / 60)} h ${m % 60 ? `${m % 60} min ` : ""}left`;
+}
+
+const ALERT_MINUTES: Array<[number, string]> = [
+  [30, "30 min"],
+  [60, "1 h"],
+  [120, "2 h"],
+  [240, "4 h"],
+  [480, "8 h"],
+];
+
+/** Active alerts for this station, and (when open) the form to set one. */
+function alertsHtml(st: StationVM): string {
+  const ws = stationWatches(st.id);
+  const list = ws.length
+    ? `<ul class="watching">${ws
+        .map(
+          (w) => `<li>${BELL}<span><b>${escapeHtml(watchText(w))}</b><small>${escapeHtml(minutesLeft(w.expires - Date.now()))}</small></span>
+            <button type="button" class="btn btn--small" data-act="unwatch" data-wid="${escapeHtml(w.id)}">Stop</button></li>`,
+        )
+        .join("")}</ul>`
+    : "";
+  const ui = state.alertUi;
+  if (!ui.open) return list;
+  const support = state.mode === "demo" ? ({ ok: false, reason: "unsupported" } as const) : pushSupport();
+  const picked = state.histPick.cid ? groupPlugs(st).flatMap((g) => g.connectors).find((c) => c.id === state.histPick.cid) : null;
+  const pickedName = picked ? (picked.position ? `Lot ${picked.position}` : `Charger ${picked.id.slice(-6)}`) : "";
+  const one = ui.one && !!picked;
+  const total = connectorIdsOf(st).length;
+  const seg = (act: string, items: Array<[string, string, boolean]>) =>
+    `<div class="segmented segmented--small" role="radiogroup">${items
+      .map(([v, label, on]) => `<button type="button" role="radio" aria-checked="${on}" data-act="${act}" data-v="${v}">${escapeHtml(label)}</button>`)
+      .join("")}</div>`;
+  const blocked =
+    support.ok
+      ? ""
+      : support.reason === "ios-install"
+        ? "On iPhone, alerts need ChargeIt on your Home Screen: tap Share, then “Add to Home Screen”, and open it from there."
+        : support.reason === "denied"
+          ? "Notifications are blocked for ChargeIt. Allow them in your browser's site settings, then try again."
+          : state.mode === "demo"
+            ? "Alerts need live data. Switch out of the demo first."
+            : "This browser can't receive alerts. Try Chrome, Edge, Firefox or Safari.";
+  return `${list}<section class="alert-panel" aria-label="Set a charger alert">
+      <p class="alert-panel__h">Notify me when</p>
+      ${seg("alert-event", [
+        ["1", "A charger frees up", ui.event === 1],
+        ["0", "A charger is taken", ui.event === 0],
+      ])}
+      ${
+        picked
+          ? seg("alert-scope", [
+              ["all", `All ${total} here`, !one],
+              ["one", pickedName, one],
+            ])
+          : `<p class="alert-panel__hint">All ${total} chargers here. Tap a charger above to watch just that one.</p>`
+      }
+      <div class="alert-panel__row" role="group" aria-label="For how long">${ALERT_MINUTES.map(
+        ([m, label]) => `<button type="button" class="chip chip--small" data-act="alert-min" data-v="${m}" aria-pressed="${ui.minutes === m}">${label}</button>`,
+      ).join("")}</div>
+      <button type="button" class="alert-panel__once" data-act="alert-once" aria-pressed="${ui.once}"><i aria-hidden="true"></i>Stop after the first alert</button>
+      ${blocked ? `<p class="alert-panel__note">${escapeHtml(blocked)}</p>` : ""}
+      ${ui.error ? `<p class="alert-panel__note is-error" role="alert">${escapeHtml(ui.error)}</p>` : ""}
+      <button type="button" class="btn btn--primary alert-panel__go" data-act="alert-go"${blocked || ui.busy ? " disabled" : ""}>${BELL}${ui.busy ? "Setting alert…" : "Start alert"}</button>
+      <p class="alert-panel__fine">Works with the app closed. Availability updates every 5 minutes, so alerts can lag by a few minutes.</p>
+    </section>`;
+}
+
+async function createAlert(st: StationVM): Promise<void> {
+  const ui = state.alertUi;
+  const conns = groupPlugs(st).flatMap((g) => g.connectors);
+  const picked = ui.one && state.histPick.cid ? conns.find((c) => c.id === state.histPick.cid) : null;
+  const chosen = picked ? [picked] : conns;
+  const labels: Record<string, string> = {};
+  for (const c of chosen) if (c.position) labels[c.id] = c.position;
+  ui.busy = true;
+  ui.error = "";
+  refreshDetail(st.id);
+  try {
+    const w = await startWatch({
+      station: st.id,
+      name: st.name,
+      connectors: chosen.map((c) => c.id),
+      labels,
+      what: picked ? (picked.position ? `lot ${picked.position}` : `charger ${picked.id.slice(-6)}`) : "any charger",
+      event: ui.event,
+      minutes: ui.minutes,
+      once: ui.once,
+    });
+    state.watches = loadWatches();
+    state.alertUi = { ...ui, open: false, busy: false, error: "" };
+    refreshDetail(st.id);
+    toast(`Alert on: ${watchText(w).toLowerCase()} at ${st.name}, for ${ALERT_MINUTES.find(([m]) => m === ui.minutes)?.[1] ?? `${ui.minutes} min`}.`);
+    haptic(12);
+  } catch (err) {
+    ui.busy = false;
+    ui.error = err instanceof Error ? err.message : "Couldn't set the alert. Try again.";
+    refreshDetail(st.id);
+  }
+}
+
+async function removeAlert(id: string): Promise<void> {
+  state.watches = state.watches.filter((w) => w.id !== id);
+  if (state.selected) refreshDetail(state.selected);
+  if (settingsEl.open) renderWatchList();
+  await stopAlertWatch(id);
+  toast("Alert stopped.");
 }
 
 function busyHoursHtml(st: StationVM, hist: StationHistory): string {
@@ -643,7 +769,10 @@ function renderDetail(id: string, animate: boolean): void {
   const fav = state.favs.has(id);
   const updated = state.payload ? timeAgo(state.payload.feedUpdated ?? state.payload.fetchedAt) : "";
   const anim = (i: number) => (animate ? `style="--delay:${i * 45}ms"` : `style="animation:none"`);
-  if (state.histPick.station !== id) state.histPick = { station: id, cid: null, day: sgtParts(Date.now()).day };
+  if (state.histPick.station !== id) {
+    state.histPick = { station: id, cid: null, day: sgtParts(Date.now()).day };
+    state.alertUi = { ...state.alertUi, open: false, busy: false, error: "" };
+  }
   const hist = state.history.get(id)?.data ?? null;
   detailView.dataset.sig = detailSig(st);
 
@@ -667,9 +796,11 @@ function renderDetail(id: string, animate: boolean): void {
     </div>
     <div class="detail__cta">
       <button type="button" class="btn btn--primary" data-act="nav">${NAV}Directions</button>
+      <button type="button" class="btn${stationWatches(id).length ? " is-on" : ""}" data-act="alert" aria-expanded="${state.alertUi.open}" aria-label="Charger alerts">${BELL}</button>
       <button type="button" class="btn" data-act="share" aria-label="Share">${SHARE}</button>
     </div>
     <div class="nav-menu" hidden></div>
+    ${alertsHtml(st)}
     <h3 class="section-h">Chargers</h3>
     ${providersHtml(ops)}
     ${groups
@@ -746,6 +877,33 @@ detailView.addEventListener("click", (e) => {
     case "day":
       state.histPick.day = Number(btn.dataset.day) || 0;
       refreshDetail(st.id);
+      break;
+    case "alert":
+      state.alertUi = { ...state.alertUi, open: !state.alertUi.open, error: "", one: !!state.histPick.cid };
+      if (state.alertUi.open) void syncWatches().then((ws) => ((state.watches = ws), refreshDetail(st.id)));
+      refreshDetail(st.id);
+      break;
+    case "alert-event":
+      state.alertUi.event = btn.dataset.v === "0" ? 0 : 1;
+      refreshDetail(st.id);
+      break;
+    case "alert-scope":
+      state.alertUi.one = btn.dataset.v === "one";
+      refreshDetail(st.id);
+      break;
+    case "alert-min":
+      state.alertUi.minutes = Number(btn.dataset.v) || 60;
+      refreshDetail(st.id);
+      break;
+    case "alert-once":
+      state.alertUi.once = !state.alertUi.once;
+      refreshDetail(st.id);
+      break;
+    case "alert-go":
+      if (!state.alertUi.busy) void createAlert(st);
+      break;
+    case "unwatch":
+      if (btn.dataset.wid) void removeAlert(btn.dataset.wid);
       break;
   }
 });
@@ -1471,10 +1629,33 @@ highlightToggle.addEventListener("change", () => {
   refilter();
 });
 
+const watchListEl = $<HTMLUListElement>("#watch-list");
+function renderWatchList(): void {
+  const now = Date.now();
+  const ws = state.watches.filter((w) => w.expires > now);
+  watchListEl.innerHTML = ws.length
+    ? ws
+        .map(
+          (w) => `<li>${BELL}<span><b>${escapeHtml(w.name)}</b><small>${escapeHtml(watchText(w))} · ${escapeHtml(minutesLeft(w.expires - now))}</small></span>
+            <button type="button" class="btn btn--small" data-unwatch="${escapeHtml(w.id)}">Stop</button></li>`,
+        )
+        .join("")
+    : `<li class="watches__empty">No alerts. Open a station and tap the bell to be notified when a charger frees up or is taken.</li>`;
+}
+watchListEl.addEventListener("click", (e) => {
+  const id = (e.target as HTMLElement).closest<HTMLElement>("[data-unwatch]")?.dataset.unwatch;
+  if (id) void removeAlert(id);
+});
+
 function openSettings(): void {
   closeMenus();
   highlightToggle.checked = state.highlightMine;
   renderDiscounts();
+  renderWatchList();
+  void syncWatches().then((ws) => {
+    state.watches = ws;
+    if (settingsEl.open) renderWatchList();
+  });
   renderThemeChoice();
   settingsEl.showModal();
   settingsEl.classList.remove("is-closing");
@@ -1578,6 +1759,11 @@ async function boot(): Promise<void> {
   hideSplash();
   if (wantDemo) await showDemo();
   else await refresh(); // schedules the next refresh itself
+  // Forget alerts that already fired (one-off) or ended while the app was closed.
+  void syncWatches().then((ws) => {
+    state.watches = ws;
+    if (state.selected) refreshDetail(state.selected);
+  });
 
   // Re-locate silently if the user granted permission before.
   try {

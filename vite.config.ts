@@ -48,6 +48,8 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Charger alert pushes (public/push-sw.js).
+        importScripts: ["push-sw.js"],
         globPatterns: ["**/*.{js,mjs,css,html,svg,png,woff2}"],
         globIgnores: ["demo/**", "**/*-cyrillic*", "**/*-greek*", "**/*-vietnamese*", "**/*.woff"],
         navigateFallback: "index.html",
