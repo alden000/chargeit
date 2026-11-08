@@ -4,7 +4,7 @@ import "@fontsource/space-grotesk/700.css";
 import "./styles.css";
 
 import { loadChargers, loadDemo, loadHistory, searchPlaces, type DataMode, type Place, type StationHistory } from "./api.ts";
-import { DAYS, busiestWindow, chartHtml, connectorStory, dayProfile, sgtParts, tileDuration } from "./history-view.ts";
+import { DAYS, busiestWindow, chartHtml, connectorStory, dayProfile, sgtParts, tileFacts } from "./history-view.ts";
 import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT } from "./icons.ts";
 import { ChargeMap, SG_CENTER, type Theme } from "./map.ts";
 import {
@@ -686,12 +686,15 @@ function renderDetail(id: string, animate: boolean): void {
               .map((c, ci) => {
                 const cls = c.s === 1 ? "free" : c.s === 0 ? "busy" : "offline";
                 const lbl = c.s === 1 ? "Free" : c.s === 0 ? "In use" : "Offline";
-                const dur = hist ? tileDuration(c.s, hist.connectors[c.id]) : null;
+                const facts = hist ? tileFacts(c.s, hist.connectors[c.id], hist.from) : null;
+                const dur = facts?.dur ?? null;
                 const picked = state.histPick.cid === c.id;
                 const tag = hist ? "button" : "div";
                 const act = hist ? ` type="button" data-act="cell" data-cid="${escapeHtml(c.id)}" aria-pressed="${picked}"` : "";
-                return `<${tag}${act} class="cell cell--${cls}${picked ? " is-picked" : ""}" style="--delay:${animate ? 200 + (gi * 4 + ci) * 40 : 0}ms" title="${escapeHtml(c.id)}" aria-label="${escapeHtml(`${lbl}${dur ? ` for ${dur}` : ""}${c.position ? `, lot ${c.position}` : ""}`)}">
-                  <b>${lbl}${dur ? `<em class="cell__dur">${dur}</em>` : ""}</b><span>${escapeHtml(c.position || c.id.slice(-6) || "—")}</span></${tag}>`;
+                const extra = [facts?.since, facts?.prev].filter(Boolean) as string[];
+                const aria = [`${lbl}${dur ? ` for ${dur}` : ""}`, ...extra.map((x) => x.replace(/^prev /, "previous session ")), c.position ? `lot ${c.position}` : ""].filter(Boolean).join(", ");
+                return `<${tag}${act} class="cell cell--${cls}${picked ? " is-picked" : ""}${hist ? " has-facts" : ""}" style="--delay:${animate ? 200 + (gi * 4 + ci) * 40 : 0}ms" title="${escapeHtml(c.id)}" aria-label="${escapeHtml(aria)}">
+                  <b>${lbl}${dur ? `<em class="cell__dur">${dur}</em>` : ""}</b>${extra.map((x) => `<small class="cell__fact">${escapeHtml(x)}</small>`).join("")}<span>${escapeHtml(c.position || c.id.slice(-6) || "—")}</span></${tag}>`;
               })
               .join("")}
           </div>

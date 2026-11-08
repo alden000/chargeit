@@ -555,6 +555,8 @@ test("charger history: durations on tiles, a tapped charger's sessions, and busy
   await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
   const tile = page.locator("#view-detail button.cell").first();
   await expect(tile.locator(".cell__dur")).toHaveText(/^\d+m$|^\d+h( \d+m)?$/);
+  await expect(tile.locator(".cell__fact").first()).toHaveText(/^since \d\d:\d\d$/);
+  await expect(tile.locator(".cell__fact").nth(1)).toHaveText("prev 1h 30m");
   await expect(page.locator(".bh__sum")).toContainText("Usually busiest 6pm–9pm");
   await expect(page.locator(".bh__bar")).toHaveCount(24);
   await expect(page.locator('.bh__day[aria-pressed="true"]')).toHaveClass(/is-today/);

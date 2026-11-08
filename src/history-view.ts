@@ -57,6 +57,26 @@ export function tileDuration(live: 0 | 1 | null, h: ConnectorHistory | null | un
   return agrees(live, h) && h.since ? shortDuration(now - h.since) : null;
 }
 
+/**
+ * The key facts for a charger tile, each short enough for a ~80px box:
+ * how long in this state, since when, and how long the previous session ran.
+ */
+export function tileFacts(
+  live: 0 | 1 | null,
+  h: ConnectorHistory | null | undefined,
+  trackedFrom: number | null,
+  now = Date.now(),
+): { dur: string | null; since: string | null; prev: string | null } {
+  const ok = agrees(live, h);
+  const since = ok ? (h.since ? `since ${clock(h.since, now)}` : trackedFrom ? `before ${clock(trackedFrom, now)}` : null) : null;
+  const last = h?.last;
+  return {
+    dur: ok && h.since ? shortDuration(now - h.since) : null,
+    since,
+    prev: last?.start ? `prev ${shortDuration(last.end - last.start)}` : last ? `prev ended ${clock(last.end, now)}` : null,
+  };
+}
+
 /** One or two sentences about a single charger's current and previous session. */
 export function connectorStory(live: 0 | 1 | null, h: ConnectorHistory | null | undefined, now = Date.now()): string[] {
   const out: string[] = [];

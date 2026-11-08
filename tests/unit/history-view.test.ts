@@ -43,3 +43,17 @@ describe("history wording", () => {
     expect(busiestWindow(Array(24).fill(null))).toBeNull();
   });
 });
+
+import { tileFacts } from "../../src/history-view.ts";
+
+describe("charger tile facts", () => {
+  const h = { s: 0 as const, since: NOW - min(80), last: { start: NOW - min(200), end: NOW - min(110) }, busy: [] };
+  it("duration, start time and previous session fit in the tile", () => {
+    expect(tileFacts(0, h, NOW - min(600), NOW)).toEqual({ dur: "1h 20m", since: "since 13:10", prev: "prev 1h 30m" });
+  });
+  it("unknown start says since when we've been watching; disagreement hides current-state facts", () => {
+    expect(tileFacts(0, { ...h, since: null, last: null }, Date.parse("2026-11-08T02:55:00Z"), NOW)).toEqual({ dur: null, since: "before 10:55", prev: null });
+    expect(tileFacts(1, h, null, NOW)).toEqual({ dur: null, since: null, prev: "prev 1h 30m" });
+    expect(tileFacts(0, { ...h, last: { start: null, end: NOW - min(5) } }, null, NOW).prev).toBe("prev ended 14:25");
+  });
+});

@@ -2420,6 +2420,26 @@ button.cell {
   outline: 2px solid var(--text);
   outline-offset: 1px;
 }
+.cell.has-facts {
+  height: auto;
+  min-height: 50px;
+  justify-content: flex-start;
+  gap: 1px;
+  padding-top: 6px;
+}
+.cell__fact {
+  position: relative;
+  font-size: 10px;
+  color: var(--text);
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.cell.has-facts span {
+  margin-top: auto;
+}
 .cell__dur {
   margin-left: 4px;
   font-style: normal;
