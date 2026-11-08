@@ -10,8 +10,10 @@
  *   GET /v1/chargers  → the full combined snapshot (older app versions)
  *   GET /v1/history?c=<connector ids> → per-charger state history and busy hours
  *
- * A cron trigger pulls each new LTA snapshot shortly after it is published and
- * records it in the D1 database bound as HISTORY (see history.ts).
+ * Every LTA snapshot is recorded in the D1 database bound as HISTORY (see
+ * history.ts): by the HistoryClock Durable Object, whose alarm fires a minute
+ * after each 5-minute snapshot (Workers Free allows only 5 cron triggers per
+ * account), and opportunistically whenever a request pulls a fresh snapshot.
  *   GET /health       → { ok, feedUpdated, fetchedAt, stale }
  *
  * EVCBatch is a two-step API: the DataMall call returns a short-lived signed
@@ -30,6 +32,8 @@ export interface Env {
   LTA_ACCOUNT_KEY: string;
   /** Charger history database; history endpoints and recording are off without it. */
   HISTORY?: D1Database;
+  /** The HistoryClock Durable Object that records every snapshot on a timer. */
+  CLOCK?: DurableObjectNamespace;
   /** Optional comma-separated override of the CORS allow-list. */
   ALLOWED_ORIGINS?: string;
 }
@@ -260,6 +264,7 @@ async function getSnapshot(env: Env, ctx: ExecutionContext): Promise<Snapshot> {
       memo = { snap, until: freshUntil(snap) };
       const ttl = freshTtlSeconds(snap.feedUpdated, Date.now());
       ctx.waitUntil(Promise.all([writeCache(FRESH_KEY, snap, ttl), writeCache(STALE_KEY, snap, STALE_TTL)]));
+      if (env.HISTORY) ctx.waitUntil(recordFresh(env.HISTORY, snap).catch((e) => console.error("history record failed:", String(e))));
       return snap;
     } catch (err) {
       lastFailureAt = Date.now();
@@ -279,6 +284,7 @@ async function getSnapshot(env: Env, ctx: ExecutionContext): Promise<Snapshot> {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    startClock(env, ctx);
 
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -347,29 +353,73 @@ export default {
     return json(request, env, JSON.stringify({ error: "not_found" }), 404);
   },
 
-  /** Cron, one minute after each 5-minute LTA snapshot: pull it (if no request already has) and record it. */
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(recordLatest(env, ctx));
-  },
 } satisfies ExportedHandler<Env>;
 
 /** Outcome of the last recording attempt in this isolate, for /health. */
 let lastRecord: (RecordResult & { tried: string }) | { error: string; tried: string } | null = null;
 
-export async function recordLatest(env: Env, ctx: ExecutionContext): Promise<void> {
-  if (!env.HISTORY) return;
-  const tried = new Date().toISOString();
-  try {
-    const snap = await getSnapshot(env, ctx);
-    if (snap.stale) {
-      lastRecord = { recorded: false, reason: "LTA unavailable", tried };
-      return;
+async function recordFresh(db: D1Database, snap: Snapshot): Promise<RecordResult> {
+  const status = (JSON.parse(snap.status) as { s: string }).s;
+  const result = await recordSnapshot(db, JSON.parse(snap.ids) as string[], status, snap.feedUpdated);
+  lastRecord = { ...result, tried: new Date().toISOString() };
+  return result;
+}
+
+let clockStarted = false;
+/** Makes sure the HistoryClock alarm is running (once per isolate; arming it is idempotent). */
+function startClock(env: Env, ctx: ExecutionContext): void {
+  if (!env.CLOCK || !env.HISTORY || clockStarted) return;
+  clockStarted = true;
+  const stub = env.CLOCK.get(env.CLOCK.idFromName("history"));
+  ctx.waitUntil(
+    stub.fetch("https://clock/start").then(
+      (r) => void r.body?.cancel(),
+      () => (clockStarted = false),
+    ),
+  );
+}
+
+/** Next run: a minute after the next 5-minute LTA snapshot. */
+export function nextClockRun(now: number): number {
+  const PERIOD = 5 * 60_000;
+  const OFFSET = 60_000;
+  return Math.floor((now - OFFSET) / PERIOD) * PERIOD + PERIOD + OFFSET;
+}
+
+/**
+ * A single Durable Object whose alarm records every LTA snapshot, standing in
+ * for a cron trigger. Pulls straight from LTA (no shared cache in here): one
+ * small DataMall call per 5 minutes.
+ */
+export class HistoryClock {
+  constructor(
+    private state: DurableObjectState,
+    private env: Env,
+  ) {}
+
+  async fetch(): Promise<Response> {
+    if ((await this.state.storage.getAlarm()) === null) await this.state.storage.setAlarm(nextClockRun(Date.now()));
+    return new Response("ok");
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    let next = nextClockRun(now);
+    try {
+      if (this.env.HISTORY) {
+        const payload = await pullFromLta(this.env);
+        const result = await recordSnapshot(this.env.HISTORY, connectorIds(payload.stations), statusString(payload.stations), payload.feedUpdated);
+        // LTA running late (still the previous snapshot): look again in a minute, up to 3 minutes past the mark.
+        const mark = now - (now % 300_000);
+        const late = !payload.feedUpdated || Date.parse(payload.feedUpdated) < mark;
+        if (!result.recorded && late && now - mark < 180_000) next = now + 60_000;
+      }
+    } catch (err) {
+      console.error("history clock failed:", String(err));
+      if ((now % 300_000) < 180_000) next = now + 60_000;
+    } finally {
+      await this.state.storage.setAlarm(next);
     }
-    const status = (JSON.parse(snap.status) as { s: string }).s;
-    lastRecord = { ...(await recordSnapshot(env.HISTORY, JSON.parse(snap.ids) as string[], status, snap.feedUpdated)), tried };
-  } catch (err) {
-    lastRecord = { error: String(err), tried };
-    console.error("history record failed:", String(err));
   }
 }
 

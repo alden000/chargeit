@@ -3,7 +3,8 @@ import "@fontsource/space-grotesk/500.css";
 import "@fontsource/space-grotesk/700.css";
 import "./styles.css";
 
-import { loadChargers, loadDemo, searchPlaces, type DataMode, type Place } from "./api.ts";
+import { loadChargers, loadDemo, loadHistory, searchPlaces, type DataMode, type Place, type StationHistory } from "./api.ts";
+import { DAYS, busiestWindow, chartHtml, connectorStory, dayProfile, sgtParts, tileDuration } from "./history-view.ts";
 import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT } from "./icons.ts";
 import { ChargeMap, SG_CENTER, type Theme } from "./map.ts";
 import {
@@ -97,6 +98,10 @@ const state = {
   favs: new Set<string>((store.get<unknown[]>("favs", []) ?? []).filter((x): x is string => typeof x === "string")),
   user: null as LngLat | null,
   selected: null as string | null,
+  /** Charger history per station: when it was fetched and what came back (null = unavailable). */
+  history: new Map<string, { at: number; data: StationHistory | null }>(),
+  /** Busy-hours chart: which station, which connector (null = all) and which weekday. */
+  histPick: { station: "", cid: null as string | null, day: sgtParts(Date.now()).day },
   loading: false,
   lastError: null as string | null,
 };
@@ -194,8 +199,10 @@ function applyPayload(payload: ChargersPayload, mode: DataMode): void {
   refilter();
   updateLive();
   if (state.selected) {
-    if (state.byId.has(state.selected)) refreshDetail(state.selected);
-    else closeDetail();
+    if (state.byId.has(state.selected)) {
+      refreshDetail(state.selected);
+      ensureHistory(state.selected);
+    } else closeDetail();
   }
   if (first) {
     const fromHash = readHash();
@@ -470,6 +477,7 @@ function openDetail(id: string, opts: { fly: boolean }): void {
   state.selected = id;
   cmap.select(id);
   writeHash(id);
+  ensureHistory(id);
   withViewTransition(() => {
     renderDetail(id, !wasOpen);
     if (!wasOpen) {
@@ -551,7 +559,57 @@ function groupPriceHtml(ep: EffectivePrice | null): string {
 }
 
 function detailSig(st: StationVM): string {
-  return JSON.stringify(st.points) + (state.favs.has(st.id) ? "*" : "") + JSON.stringify(state.discounts);
+  const h = state.history.get(st.id);
+  // Durations tick every minute, so the minute is part of the signature once history is shown.
+  const hist = h?.data ? `|${h.at}|${Math.floor(Date.now() / 60_000)}|${JSON.stringify(state.histPick)}` : "";
+  return JSON.stringify(st.points) + (state.favs.has(st.id) ? "*" : "") + JSON.stringify(state.discounts) + hist;
+}
+
+function connectorIdsOf(st: StationVM): string[] {
+  return st.points.flatMap((pt) => pt.plugs.flatMap((pl) => pl.connectors.map((c) => c.id))).filter(Boolean);
+}
+
+const historyInFlight = new Set<string>();
+/** Fetches a station's history if missing or more than a minute old, then refreshes the open detail. */
+function ensureHistory(id: string): void {
+  if (state.mode === "demo") return;
+  const st = state.byId.get(id);
+  const have = state.history.get(id);
+  if (!st || historyInFlight.has(id) || (have && Date.now() - have.at < 60_000)) return;
+  historyInFlight.add(id);
+  void loadHistory(connectorIdsOf(st)).then((data) => {
+    historyInFlight.delete(id);
+    state.history.set(id, { at: Date.now(), data });
+    if (state.selected === id) refreshDetail(id);
+  });
+}
+
+function historyStoryHtml(st: StationVM, cid: string, hist: StationHistory): string {
+  const live = groupPlugs(st).flatMap((g) => g.connectors).find((c) => c.id === cid);
+  if (!live) return "";
+  const lines = connectorStory(live.s, hist.connectors[cid], Date.now());
+  const where = live.position ? `Lot ${live.position}` : `Charger ${cid.slice(-6)}`;
+  return `<p class="story" aria-live="polite"><b>${escapeHtml(where)}</b> ${lines.length ? escapeHtml(lines.join(" ")) : "No history for this charger yet."}</p>`;
+}
+
+function busyHoursHtml(st: StationVM, hist: StationHistory): string {
+  const pick = state.histPick;
+  const ids = pick.cid ? [pick.cid] : connectorIdsOf(st);
+  const today = sgtParts(Date.now());
+  const profile = dayProfile(hist, ids, pick.day);
+  const any = profile.some((v) => v !== null);
+  const live = pick.cid ? groupPlugs(st).flatMap((g) => g.connectors).find((c) => c.id === pick.cid) : null;
+  const who = live ? (live.position ? `lot ${live.position}` : `charger ${pick.cid!.slice(-6)}`) : "all chargers here";
+  const since = hist.from ? new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Singapore", day: "numeric", month: "short" }).format(hist.from) : "";
+  return `<h3 class="section-h">Busy hours</h3>
+    <section class="bh">
+      <div class="bh__days" role="group" aria-label="Day of the week">${DAYS.map(
+        (d, i) => `<button type="button" class="chip bh__day${i === today.day ? " is-today" : ""}" data-act="day" data-day="${i}" aria-pressed="${i === pick.day}"${i === today.day ? ` aria-label="${d} (today)"` : ""}>${d}</button>`,
+      ).join("")}</div>
+      <p class="bh__sum">${escapeHtml(any ? (busiestWindow(profile) ?? "Still learning this day's pattern") : "Still learning — check back in a week or two")} <small>· ${escapeHtml(who)}${pick.cid ? ` · <button type="button" class="linkish" data-act="cell" data-cid="${escapeHtml(pick.cid)}">show all</button>` : " · tap a charger to see just that one"}</small></p>
+      ${chartHtml(profile, pick.day === today.day ? today.hour : null)}
+      <p class="bh__foot">% of the time in use, from LTA availability every 5 minutes${since ? `, recorded since ${escapeHtml(since)}` : ""}. Singapore time.</p>
+    </section>`;
 }
 
 /** Re-renders an open detail only when its data changed, preserving the nav menu and focus. */
@@ -559,12 +617,15 @@ function refreshDetail(id: string): void {
   const st = state.byId.get(id);
   if (!st || detailView.dataset.sig === detailSig(st)) return;
   const menuOpen = !detailView.querySelector<HTMLElement>(".nav-menu")?.hidden;
-  const focusAct = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("#view-detail [data-act]")?.dataset.act;
+  const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("#view-detail [data-act]");
+  const focusAct = focused?.dataset.act;
+  // Charger tiles and day chips share an action; find the same one again.
+  const focusKey = focused?.dataset.cid ? `[data-cid="${CSS.escape(focused.dataset.cid)}"]` : focused?.dataset.day ? `[data-day="${focused.dataset.day}"]` : "";
   const scroll = detailView.scrollTop;
   renderDetail(id, false);
   detailView.scrollTop = scroll;
   if (menuOpen) toggleNavMenu(st);
-  if (focusAct) detailView.querySelector<HTMLElement>(`[data-act="${focusAct}"]`)?.focus({ preventScroll: true });
+  if (focusAct) detailView.querySelector<HTMLElement>(`[data-act="${focusAct}"]${focusKey}`)?.focus({ preventScroll: true });
 }
 
 function renderDetail(id: string, animate: boolean): void {
@@ -577,6 +638,8 @@ function renderDetail(id: string, animate: boolean): void {
   const fav = state.favs.has(id);
   const updated = state.payload ? timeAgo(state.payload.feedUpdated ?? state.payload.fetchedAt) : "";
   const anim = (i: number) => (animate ? `style="--delay:${i * 45}ms"` : `style="animation:none"`);
+  if (state.histPick.station !== id) state.histPick = { station: id, cid: null, day: sgtParts(Date.now()).day };
+  const hist = state.history.get(id)?.data ?? null;
   detailView.dataset.sig = detailSig(st);
 
   detailView.innerHTML = `
@@ -623,14 +686,20 @@ function renderDetail(id: string, animate: boolean): void {
               .map((c, ci) => {
                 const cls = c.s === 1 ? "free" : c.s === 0 ? "busy" : "offline";
                 const lbl = c.s === 1 ? "Free" : c.s === 0 ? "In use" : "Offline";
-                return `<div class="cell cell--${cls}" style="--delay:${animate ? 200 + (gi * 4 + ci) * 40 : 0}ms" title="${escapeHtml(c.id)}" aria-label="${escapeHtml(`${lbl}${c.position ? `, lot ${c.position}` : ""}`)}">
-                  <b>${lbl}</b><span>${escapeHtml(c.position || c.id.slice(-6) || "—")}</span></div>`;
+                const dur = hist ? tileDuration(c.s, hist.connectors[c.id]) : null;
+                const picked = state.histPick.cid === c.id;
+                const tag = hist ? "button" : "div";
+                const act = hist ? ` type="button" data-act="cell" data-cid="${escapeHtml(c.id)}" aria-pressed="${picked}"` : "";
+                return `<${tag}${act} class="cell cell--${cls}${picked ? " is-picked" : ""}" style="--delay:${animate ? 200 + (gi * 4 + ci) * 40 : 0}ms" title="${escapeHtml(c.id)}" aria-label="${escapeHtml(`${lbl}${dur ? ` for ${dur}` : ""}${c.position ? `, lot ${c.position}` : ""}`)}">
+                  <b>${lbl}${dur ? `<em class="cell__dur">${dur}</em>` : ""}</b><span>${escapeHtml(c.position || c.id.slice(-6) || "—")}</span></${tag}>`;
               })
               .join("")}
           </div>
+          ${hist && state.histPick.cid && g.connectors.some((c) => c.id === state.histPick.cid) ? historyStoryHtml(st, state.histPick.cid, hist) : ""}
         </section>`;
       })
       .join("")}
+    ${hist ? busyHoursHtml(st, hist) : ""}
     <p class="detail__foot">
       ${st.points[0]?.hours ? `Hours: ${escapeHtml(st.points[0].hours)}<br/>` : ""}
       Availability ${state.mode === "demo" ? "from a demo snapshot" : `updated ${escapeHtml(updated)}`}. Prices are set by the provider and may change; check the provider's app before charging.
@@ -655,6 +724,15 @@ detailView.addEventListener("click", (e) => {
       break;
     case "share":
       void share(st);
+      break;
+    case "cell":
+      state.histPick.cid = state.histPick.cid === btn.dataset.cid ? null : (btn.dataset.cid ?? null);
+      haptic(6);
+      refreshDetail(st.id);
+      break;
+    case "day":
+      state.histPick.day = Number(btn.dataset.day) || 0;
+      refreshDetail(st.id);
       break;
   }
 });
@@ -1506,3 +1584,8 @@ registerPwa((update) => toast("A new version of ChargeIt is ready.", { label: "R
 
 // Expose a tiny hook for end-to-end tests.
 (window as unknown as { __chargeit: unknown }).__chargeit = { state, sheet, cmap };
+
+// Session durations in an open station tick over every minute.
+window.setInterval(() => {
+  if (state.selected && document.visibilityState === "visible" && state.history.get(state.selected)?.data) refreshDetail(state.selected);
+}, 30_000);

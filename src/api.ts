@@ -224,3 +224,55 @@ export async function searchPlaces(q: string, signal?: AbortSignal): Promise<Pla
 function titleCase(s: string): string {
   return s.toLowerCase().replace(/(^|[\s(/-])([a-z])/g, (_, p: string, c: string) => p + c.toUpperCase()).replace(/\bMrt\b/g, "MRT").replace(/\bLrt\b/g, "LRT");
 }
+
+// ── Charger history (recorded by the Worker every 5 minutes) ────────────
+
+export interface ConnectorHistory {
+  s: 0 | 1 | null;
+  since: number | null;
+  last: { start: number | null; end: number } | null;
+  /** % of the time in use, per hour of the week (0 = Monday 00:00 SGT); null = not enough data. */
+  busy: Array<number | null>;
+}
+
+export interface StationHistory {
+  at: number | null;
+  from: number | null;
+  connectors: Record<string, ConnectorHistory | null>;
+}
+
+const t = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
+
+function sanitizeConnector(v: unknown): ConnectorHistory | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const last = o.last && typeof o.last === "object" ? (o.last as Record<string, unknown>) : null;
+  const end = last ? t(last.end) : null;
+  const busy = Array.isArray(o.busy) ? o.busy.slice(0, 168) : [];
+  return {
+    s: o.s === 0 || o.s === 1 ? o.s : null,
+    since: t(o.since),
+    last: last && end ? { start: t(last.start), end } : null,
+    busy: Array.from({ length: 168 }, (_, i) => {
+      const b = busy[i];
+      return typeof b === "number" && b >= 0 && b <= 100 ? b : null;
+    }),
+  };
+}
+
+/** History for the given connectors; null when the history service isn't reachable. */
+export async function loadHistory(connectorIds: string[]): Promise<StationHistory | null> {
+  const ids = [...new Set(connectorIds.filter((id) => /^[A-Za-z0-9._-]{1,40}$/.test(id)))].sort().slice(0, 200);
+  if (!ids.length) return null;
+  try {
+    const { data } = await fetchJson(`${API_BASE}/v1/history?c=${ids.map(encodeURIComponent).join(",")}`, 10_000, "default");
+    if (!data || typeof data !== "object") return null;
+    const o = data as Record<string, unknown>;
+    const raw = o.connectors && typeof o.connectors === "object" ? (o.connectors as Record<string, unknown>) : {};
+    const connectors: Record<string, ConnectorHistory | null> = {};
+    for (const id of ids) connectors[id] = sanitizeConnector(raw[id]);
+    return { at: t(o.at), from: t(o.from), connectors };
+  } catch {
+    return null;
+  }
+}

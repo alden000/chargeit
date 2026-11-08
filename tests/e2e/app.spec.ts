@@ -549,3 +549,32 @@ test("old-style station ids in favourites, recents and links still work", async 
   await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
   await expect.poll(() => page.evaluate(() => [localStorage.getItem("chargeit:favs"), JSON.parse(localStorage.getItem("chargeit:recents") ?? "[]")[0]?.id])).toEqual(['["179024"]', "179024"]);
 });
+
+test("charger history: durations on tiles, a tapped charger's sessions, and busy hours by weekday", async ({ page, api: _ }) => {
+  await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+  await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+  const tile = page.locator("#view-detail button.cell").first();
+  await expect(tile.locator(".cell__dur")).toHaveText(/^\d+m$|^\d+h( \d+m)?$/);
+  await expect(page.locator(".bh__sum")).toContainText("Usually busiest 6pm–9pm");
+  await expect(page.locator(".bh__bar")).toHaveCount(24);
+  await expect(page.locator('.bh__day[aria-pressed="true"]')).toHaveClass(/is-today/);
+
+  await tile.click();
+  await expect(tile).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".story")).toContainText(/(In use|Free) since \d\d:\d\d \(\d+ min\)\. Previous session \d\d:\d\d–\d\d:\d\d \(1 h 30 min\)\./);
+  await expect(page.locator(".bh__sum")).toContainText("lot");
+
+  await page.locator('.bh__day[data-day="0"]').click();
+  await expect(page.locator('.bh__day[data-day="0"]')).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "show all" }).click();
+  await expect(page.locator(".story")).toHaveCount(0);
+});
+
+test("charger history unavailable: the station screen works as before", async ({ page, api }) => {
+  await page.route("**/v1/history?*", (r) => r.fulfill({ status: 503, body: "{}" }));
+  await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+  await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+  await expect(page.locator("#view-detail .cell").first()).toBeVisible();
+  await expect(page.locator(".bh")).toHaveCount(0);
+  expect(api.calls()).toBeGreaterThan(0);
+});

@@ -18,6 +18,26 @@ export function statusBody(feedUpdated = new Date(Date.now() - 120_000).toISOStr
   return JSON.stringify({ v: 1, feedUpdated, fetchedAt: new Date().toISOString(), sv: TEST_SV, cv: "test-cv", s: statusString(snapshot.stations) });
 }
 
+const liveState = new Map(snapshot.stations.flatMap((s) => s.points.flatMap((p) => p.plugs.flatMap((pl) => pl.connectors.map((c) => [c.id, c.s] as const)))));
+
+/** Deterministic history: each charger has been in its state for 25 min + 10 min per position, busy peaks 6–9pm. */
+export function historyBody(ids: string[], now = Date.now()) {
+  const connectors: Record<string, unknown> = {};
+  ids.forEach((id, i) => {
+    const s = liveState.get(id) ?? null;
+    connectors[id] = {
+      s,
+      since: now - (25 + 10 * i) * 60_000,
+      last: { start: now - (200 + 10 * i) * 60_000, end: now - (110 + 10 * i) * 60_000 },
+      busy: Array.from({ length: 168 }, (_, k) => {
+        const h = k % 24;
+        return h >= 18 && h < 21 ? 80 : h < 6 ? 5 : 30;
+      }),
+    };
+  });
+  return { at: now - 60_000, from: now - 14 * 86_400_000, connectors };
+}
+
 export async function mockApi(page: Page, mode: () => ApiMode): Promise<{ calls: () => number; stationCalls: () => number }> {
   let calls = 0;
   let stationCalls = 0;
@@ -34,6 +54,11 @@ export async function mockApi(page: Page, mode: () => ApiMode): Promise<{ calls:
     const m = mode();
     if (m === "down") return down(route);
     return route.fulfill({ status: 200, contentType: "application/json", headers: headers(m), body: stationsBody });
+  });
+  await page.route("**/v1/history?*", async (route: Route) => {
+    if (mode() === "down") return route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"history_unavailable"}' });
+    const ids = (new URL(route.request().url()).searchParams.get("c") ?? "").split(",");
+    return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify(historyBody(ids)) });
   });
   await page.route("**/v1/chargers", async (route: Route) => {
     calls++;

@@ -242,3 +242,14 @@ describe("/v1/history", () => {
     expect((await worker.fetch(req("/v1/history?c=bad%20id"), withDb, ctx)).status).toBe(400);
   });
 });
+
+describe("history clock", () => {
+  it("runs a minute after each 5-minute LTA snapshot", async () => {
+    const { nextClockRun } = await import("../../worker/src/index.ts");
+    const t = (s: string) => Date.parse(`2026-11-08T${s}Z`);
+    expect(nextClockRun(t("10:00:00"))).toBe(t("10:01:00"));
+    expect(nextClockRun(t("10:01:00"))).toBe(t("10:06:00"));
+    expect(nextClockRun(t("10:04:59"))).toBe(t("10:06:00"));
+    expect(nextClockRun(t("10:06:30"))).toBe(t("10:11:00"));
+  });
+});

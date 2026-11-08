@@ -2406,3 +2406,144 @@ svg {
 .search__item--recent > div {
   flex: 1;
 }
+
+/* ───────────────────────── Charger history ───────────────────────── */
+button.cell {
+  font: inherit;
+  color: inherit;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.cell.is-picked {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+.cell__dur {
+  margin-left: 4px;
+  font-style: normal;
+  font-weight: 600;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.story {
+  margin: 8px 2px 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.story b {
+  color: var(--text);
+  margin-right: 2px;
+}
+.bh {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.bh__days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.bh__day {
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  font-size: 12px;
+}
+.bh__day.is-today:not([aria-pressed="true"]) {
+  border-color: var(--volt);
+}
+.bh__sum {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.bh__sum small {
+  font-weight: 400;
+  color: var(--muted);
+}
+.linkish {
+  font: inherit;
+  color: var(--volt);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.bh__chart {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 2px;
+  align-items: end;
+  height: 84px;
+}
+.bh__bar {
+  height: calc(4% + var(--v) * 0.96%);
+  border-radius: 3px 3px 1px 1px;
+  background: var(--volt);
+  transform-origin: bottom;
+  animation: bh-grow 500ms var(--ease-out) both;
+}
+.bh__bar.is-mid {
+  background: var(--amber);
+}
+.bh__bar.is-high {
+  background: var(--ember);
+}
+.bh__bar.is-empty {
+  height: 4%;
+  background: var(--line);
+}
+.bh__bar.is-now {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+@keyframes bh-grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+.bh__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.bh__legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.bh__legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 2px;
+  background: var(--volt);
+}
+.bh__legend .is-mid {
+  background: var(--amber);
+}
+.bh__legend .is-high {
+  background: var(--ember);
+}
+.bh__foot {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .bh__bar {
+    animation: none;
+  }
+}
