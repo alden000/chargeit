@@ -1,0 +1,34 @@
+name: Check Cloudflare token permissions
+
+# Manual only. Reports whether CLOUDFLARE_API_TOKEN can read and edit D1.
+# The edit check creates and immediately deletes a throwaway empty database.
+# Prints pass/fail only; never the token or account id.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check D1 access
+        run: |
+          set -u
+          api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/d1/database"
+          auth=(-H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json")
+          ok() { python3 -c 'import sys,json; d=json.load(sys.stdin); print("ok" if d.get("success") else "FAIL " + "; ".join(f"{e.get(\"code\")}: {e.get(\"message\")}" for e in d.get("errors", [])))'; }
+
+          echo "D1 read (list databases): $(curl -s "${auth[@]}" "$api" | ok)"
+
+          created=$(curl -s "${auth[@]}" -X POST "$api" -d '{"name":"chargeit-permission-test"}')
+          echo "D1 edit (create test database): $(echo "$created" | ok)"
+          id=$(echo "$created" | python3 -c 'import sys,json; print((json.load(sys.stdin).get("result") or {}).get("uuid",""))')
+          if [ -n "$id" ]; then
+            echo "D1 edit (delete test database): $(curl -s "${auth[@]}" -X DELETE "$api/$id" | ok)"
+          fi
