@@ -1,0 +1,38 @@
+name: Set up history database (D1)
+
+# Manual only. Creates the chargeit-history D1 database if it doesn't exist
+# and prints its id (not a secret) for worker/wrangler.toml.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Create or find chargeit-history
+        run: |
+          set -u
+          api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/d1/database"
+          auth=(-H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json")
+          cat > /tmp/find.py <<'PY'
+          import json, sys
+          d = json.load(sys.stdin)
+          for db in d.get("result") or []:
+              if db.get("name") == "chargeit-history":
+                  print(db["uuid"])
+          PY
+          id=$(curl -s "${auth[@]}" "$api?name=chargeit-history" | python3 /tmp/find.py)
+          if [ -z "$id" ]; then
+            echo "Creating chargeit-history"
+            curl -s "${auth[@]}" -X POST "$api" -d '{"name":"chargeit-history","primary_location_hint":"apac"}' > /tmp/created.json
+            id=$(python3 -c 'import json; print((json.load(open("/tmp/created.json")).get("result") or {}).get("uuid",""))')
+          fi
+          [ -n "$id" ] || { echo "::error::Could not create or find the database"; exit 1; }
+          echo "DATABASE_ID=$id"
