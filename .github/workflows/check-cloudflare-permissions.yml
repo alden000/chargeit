@@ -41,6 +41,9 @@ jobs:
           api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/d1/database"
           auth=(-H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json")
 
+          echo "Token valid (user token verify): $(curl -s "${auth[@]}" https://api.cloudflare.com/client/v4/user/tokens/verify | python3 /tmp/ok.py)"
+          echo "Token valid (account token verify): $(curl -s "${auth[@]}" "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/tokens/verify" | python3 /tmp/ok.py)"
+          echo "Workers read (list scripts): $(curl -s "${auth[@]}" "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/scripts" | python3 /tmp/ok.py)"
           echo "D1 read (list databases): $(curl -s "${auth[@]}" "$api" | python3 /tmp/ok.py)"
           echo "D1 edit (create test database): $(curl -s "${auth[@]}" -X POST "$api" -d '{"name":"chargeit-permission-test"}' | python3 /tmp/ok.py)"
           # Delete the test database, plus any left over from an earlier run.
