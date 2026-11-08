@@ -42,6 +42,11 @@ function ordered<C extends Connector>(st: { points: { plugs: { connectors: C[] }
   return all.map((c, i) => [c, i] as const).sort(([a, i], [b, j]) => (a.id < b.id ? -1 : a.id > b.id ? 1 : i - j)).map(([c]) => c);
 }
 
+/** Every connector id in status-string order (what the history log indexes by). */
+export function connectorIds(stations: readonly Station[]): string[] {
+  return stations.flatMap((st) => ordered(st).map((c) => c.id));
+}
+
 /** What `sv` hashes: site ids and their connector ids, in status order. */
 export function layoutKey(stations: readonly Station[]): string {
   return stations.map((st) => `${st.id}:${ordered(st).map((c) => c.id).join(",")}`).join(";");

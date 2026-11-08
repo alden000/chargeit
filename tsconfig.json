@@ -17,5 +17,5 @@
     "skipLibCheck": true
   },
   "include": ["src", "shared", "tests/unit"],
-  "exclude": ["tests/unit/worker.test.ts"]
+  "exclude": ["tests/unit/worker.test.ts", "tests/unit/history.test.ts"]
 }

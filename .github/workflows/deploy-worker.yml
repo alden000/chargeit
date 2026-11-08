@@ -35,6 +35,6 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: worker/package-lock.json
-      - run: npm ci && npm run typecheck && npx wrangler deploy
+      - run: npm ci && npm run typecheck && npx wrangler d1 migrations apply chargeit-history --remote && npx wrangler deploy
         if: env.CLOUDFLARE_API_TOKEN != ''
         working-directory: worker

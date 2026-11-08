@@ -233,3 +233,12 @@ describe("split endpoints: /v1/stations + /v1/status", () => {
     expect(((await res.json()) as StatusPayload).s).toBe("1");
   });
 });
+
+describe("/v1/history", () => {
+  it("is unavailable without the database, and rejects bad connector lists", async () => {
+    expect((await worker.fetch(req("/v1/history?c=R1-001"), env, ctx)).status).toBe(503);
+    const withDb = { ...env, HISTORY: {} as D1Database };
+    expect((await worker.fetch(req("/v1/history"), withDb, ctx)).status).toBe(400);
+    expect((await worker.fetch(req("/v1/history?c=bad%20id"), withDb, ctx)).status).toBe(400);
+  });
+});

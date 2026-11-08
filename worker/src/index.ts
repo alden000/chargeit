@@ -8,6 +8,10 @@
  *   GET /v1/status    → availability only, ~5 KB gzipped (the app polls this)
  *   GET /v1/stations  → everything else, versioned by `sv` (see shared/split.ts)
  *   GET /v1/chargers  → the full combined snapshot (older app versions)
+ *   GET /v1/history?c=<connector ids> → per-charger state history and busy hours
+ *
+ * A cron trigger pulls each new LTA snapshot shortly after it is published and
+ * records it in the D1 database bound as HISTORY (see history.ts).
  *   GET /health       → { ok, feedUpdated, fetchedAt, stale }
  *
  * EVCBatch is a two-step API: the DataMall call returns a short-lived signed
@@ -19,10 +23,13 @@
 import { normalizeBatch } from "../../shared/normalize";
 import type { ChargersPayload } from "../../shared/schema";
 import { nextFeedAt } from "../../shared/cadence";
-import { layoutKey, statusString, stripStatusJson } from "../../shared/split";
+import { connectorIds, layoutKey, statusString, stripStatusJson } from "../../shared/split";
+import { readHistory, recordSnapshot, type RecordResult } from "./history";
 
 export interface Env {
   LTA_ACCOUNT_KEY: string;
+  /** Charger history database; history endpoints and recording are off without it. */
+  HISTORY?: D1Database;
   /** Optional comma-separated override of the CORS allow-list. */
   ALLOWED_ORIGINS?: string;
 }
@@ -45,7 +52,7 @@ const DEFAULT_ORIGINS = ["https://chargeit.wwweeeiii.com", "https://alden000.git
 // Each tier holds the three bodies of one snapshot under /full, /stations, /status.
 const FRESH_KEY = "https://chargeit-cache.internal/v1/chargers/fresh";
 const STALE_KEY = "https://chargeit-cache.internal/v1/chargers/last-good";
-const PARTS = ["full", "stations", "status"] as const;
+const PARTS = ["full", "stations", "status", "ids"] as const;
 
 interface Snapshot {
   /** Full combined payload (/v1/chargers). */
@@ -54,6 +61,8 @@ interface Snapshot {
   stations: string;
   /** Availability only (/v1/status). */
   status: string;
+  /** JSON array of connector ids in the status string's order (for history). */
+  ids: string;
   /** Layout and content versions of `stations` (see shared/split.ts). */
   sv: string;
   cv: string;
@@ -163,6 +172,7 @@ export async function toSnapshot(payload: ChargersPayload): Promise<Snapshot> {
     body: `{${head},"stations":${stationsJson}}`,
     stations: `{"v":1,"sv":"${sv}","cv":"${cv}","stations":${stripped}}`,
     status: `{${head},"sv":"${sv}","cv":"${cv}","s":"${statusString(payload.stations)}"}`,
+    ids: JSON.stringify(connectorIds(payload.stations)),
     sv,
     cv,
     feedUpdated: payload.feedUpdated,
@@ -173,14 +183,15 @@ export async function toSnapshot(payload: ChargersPayload): Promise<Snapshot> {
 
 async function readCache(key: string): Promise<Snapshot | null> {
   const hits = await Promise.all(PARTS.map((p) => caches.default.match(`${key}/${p}`)));
-  if (hits.some((h) => !h)) return null; // all three parts or nothing
-  const [full, stations, status] = await Promise.all(hits.map((h) => h!.text()));
+  if (hits.some((h) => !h)) return null; // all parts or nothing
+  const [full, stations, status, ids] = await Promise.all(hits.map((h) => h!.text()));
   const h = hits[0]!.headers;
   if (!h.get("X-SV") || !h.get("X-CV")) return null; // also drops entries from before cv existed
   return {
     body: full,
     stations,
     status,
+    ids,
     sv: h.get("X-SV")!,
     cv: h.get("X-CV")!,
     feedUpdated: h.get("X-Feed-Updated") || null,
@@ -190,7 +201,7 @@ async function readCache(key: string): Promise<Snapshot | null> {
 }
 
 async function writeCache(key: string, snap: Snapshot, ttl: number): Promise<void> {
-  const bodies = { full: snap.body, stations: snap.stations, status: snap.status };
+  const bodies = { full: snap.body, stations: snap.stations, status: snap.status, ids: snap.ids };
   await Promise.all(
     PARTS.map((p) =>
       caches.default.put(
@@ -297,6 +308,20 @@ export default {
       }
     }
 
+    if (path === "/v1/history") {
+      if (!env.HISTORY) return json(request, env, JSON.stringify({ error: "history_unavailable" }), 503, { "Cache-Control": "no-store" });
+      const ids = (url.searchParams.get("c") ?? "").split(",").filter(Boolean);
+      if (!ids.length || ids.length > 200 || ids.some((id) => !/^[A-Za-z0-9._-]{1,40}$/.test(id))) {
+        return json(request, env, JSON.stringify({ error: "bad_request" }), 400, { "Cache-Control": "no-store" });
+      }
+      try {
+        return json(request, env, JSON.stringify(await readHistory(env.HISTORY, ids)), 200, { "Cache-Control": "public, max-age=60" });
+      } catch (err) {
+        console.error("history read failed:", String(err));
+        return json(request, env, JSON.stringify({ error: "history_unavailable" }), 503, { "Cache-Control": "no-store" });
+      }
+    }
+
     if (path === "/health") {
       const snap = memo?.snap ?? (await readCache(FRESH_KEY)) ?? (await readCache(STALE_KEY));
       return json(
@@ -308,6 +333,7 @@ export default {
           feedUpdated: snap?.feedUpdated ?? null,
           fetchedAt: snap?.fetchedAt ?? null,
           stale: snap ? Date.now() - Date.parse(snap.fetchedAt) > FRESH_TTL * 1000 * 2 : null,
+          history: lastRecord,
         }),
         200,
         { "Cache-Control": "no-store" },
@@ -315,16 +341,42 @@ export default {
     }
 
     if (path === "/") {
-      return json(request, env, JSON.stringify({ name: "chargeit-lta-proxy", endpoints: ["/v1/status", "/v1/stations", "/v1/chargers", "/health"] }));
+      return json(request, env, JSON.stringify({ name: "chargeit-lta-proxy", endpoints: ["/v1/status", "/v1/stations", "/v1/chargers", "/v1/history", "/health"] }));
     }
 
     return json(request, env, JSON.stringify({ error: "not_found" }), 404);
   },
+
+  /** Cron, one minute after each 5-minute LTA snapshot: pull it (if no request already has) and record it. */
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(recordLatest(env, ctx));
+  },
 } satisfies ExportedHandler<Env>;
+
+/** Outcome of the last recording attempt in this isolate, for /health. */
+let lastRecord: (RecordResult & { tried: string }) | { error: string; tried: string } | null = null;
+
+export async function recordLatest(env: Env, ctx: ExecutionContext): Promise<void> {
+  if (!env.HISTORY) return;
+  const tried = new Date().toISOString();
+  try {
+    const snap = await getSnapshot(env, ctx);
+    if (snap.stale) {
+      lastRecord = { recorded: false, reason: "LTA unavailable", tried };
+      return;
+    }
+    const status = (JSON.parse(snap.status) as { s: string }).s;
+    lastRecord = { ...(await recordSnapshot(env.HISTORY, JSON.parse(snap.ids) as string[], status, snap.feedUpdated)), tried };
+  } catch (err) {
+    lastRecord = { error: String(err), tried };
+    console.error("history record failed:", String(err));
+  }
+}
 
 /** Test hook: clears per-isolate state. */
 export function __resetForTests(): void {
   memo = null;
   inflight = null;
   lastFailureAt = 0;
+  lastRecord = null;
 }
