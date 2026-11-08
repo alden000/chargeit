@@ -597,8 +597,15 @@ test.describe("charger alerts", () => {
         endpoint: "https://fcm.googleapis.com/fcm/send/test",
         toJSON: () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/test", keys: { p256dh: "BTest", auth: "aTest" } }),
       };
-      PushManager.prototype.getSubscription = async () => null;
-      PushManager.prototype.subscribe = async () => fake as unknown as PushSubscription;
+      // Simulate push support whether or not this browser build has it (CI's headless shell doesn't).
+      const w = window as unknown as Record<string, unknown>;
+      if (!("PushManager" in window)) w.PushManager = class {};
+      if (!("Notification" in window)) w.Notification = class {};
+      // The headless shell reports "denied" even when the test grants permission.
+      Object.defineProperty(Notification, "permission", { get: () => "granted", configurable: true });
+      Object.defineProperty(Notification, "requestPermission", { value: async () => "granted", configurable: true });
+      const pm = { getSubscription: async () => null, subscribe: async () => fake };
+      Object.defineProperty(ServiceWorkerRegistration.prototype, "pushManager", { get: () => pm, configurable: true });
     });
     await page.route("**/v1/push/key", (r) => r.fulfill({ contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ key: "B" + "A".repeat(86) }) }));
     await page.route("**/v1/watch*", async (r) => {
