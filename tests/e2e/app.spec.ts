@@ -555,20 +555,26 @@ test("charger history: durations on tiles, a tapped charger's sessions, and busy
   await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
   const tile = page.locator("#view-detail button.cell").first();
   await expect(tile.locator(".cell__dur")).toHaveText(/^\d+m$|^\d+h( \d+m)?$/);
-  await expect(tile.locator(".cell__fact").first()).toHaveText(/^since \d\d:\d\d$/);
-  await expect(tile.locator(".cell__fact").nth(1)).toHaveText("prev 1h 30m");
-  await expect(page.locator(".bh__sum")).toContainText("Usually busiest 6pm–9pm");
+  await expect(tile.locator(".cell__since")).toHaveText(/^since \d\d:\d\d$/);
+  // A charger that was already in its state when tracking began shows a minimum.
+  const atLeast = page.locator("#view-detail button.cell").nth(2);
+  if (await atLeast.count()) {
+    await expect(atLeast.locator(".cell__dur")).toHaveText(/\+$/);
+    await expect(atLeast.locator(".cell__since")).toHaveText("");
+    await expect(page.locator(".cells-note")).toContainText("at least that long");
+  }
+  await expect(page.locator(".bh__sum")).toHaveText("Busiest 6pm–9pm");
   await expect(page.locator(".bh__bar")).toHaveCount(24);
   await expect(page.locator('.bh__day[aria-pressed="true"]')).toHaveClass(/is-today/);
 
   await tile.click();
   await expect(tile).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".story")).toContainText(/(In use|Free) since \d\d:\d\d \(\d+ min\)\. Previous session \d\d:\d\d–\d\d:\d\d \(1 h 30 min\)\./);
-  await expect(page.locator(".bh__sum")).toContainText("lot");
+  await expect(page.locator(".bh__who")).toContainText("Lot");
 
   await page.locator('.bh__day[data-day="0"]').click();
   await expect(page.locator('.bh__day[data-day="0"]')).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "show all" }).click();
+  await page.getByRole("button", { name: "Show all" }).click();
   await expect(page.locator(".story")).toHaveCount(0);
 });
 

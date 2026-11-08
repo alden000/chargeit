@@ -20,15 +20,22 @@ export function statusBody(feedUpdated = new Date(Date.now() - 120_000).toISOStr
 
 const liveState = new Map(snapshot.stations.flatMap((s) => s.points.flatMap((p) => p.plugs.flatMap((pl) => pl.connectors.map((c) => [c.id, c.s] as const)))));
 
-/** Deterministic history: each charger has been in its state for 25 min + 10 min per position, busy peaks 6–9pm. */
+/**
+ * Deterministic history: each charger has been in its state for 25 min + 10 min
+ * per position (every third one only "at least", started before tracking), and
+ * busy peaks 6–9pm.
+ */
 export function historyBody(ids: string[], now = Date.now()) {
   const connectors: Record<string, unknown> = {};
   ids.forEach((id, i) => {
     const s = liveState.get(id) ?? null;
+    const t = now - (25 + 10 * i) * 60_000;
+    const lowerBound = i % 3 === 2;
     connectors[id] = {
       s,
-      since: now - (25 + 10 * i) * 60_000,
-      last: { start: now - (200 + 10 * i) * 60_000, end: now - (110 + 10 * i) * 60_000 },
+      since: lowerBound ? null : t,
+      sinceBefore: lowerBound ? t : null,
+      last: { start: now - (200 + 10 * i) * 60_000, startBefore: null, end: now - (110 + 10 * i) * 60_000 },
       busy: Array.from({ length: 168 }, (_, k) => {
         const h = k % 24;
         return h >= 18 && h < 21 ? 80 : h < 6 ? 5 : 30;

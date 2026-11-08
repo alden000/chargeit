@@ -24,14 +24,16 @@ export function formatDuration(ms: number): string {
 /** "1h 20m" — fits inside a charger tile. */
 export function shortDuration(ms: number): string {
   const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 1) return "<1m";
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
   if (h < 24) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
-/** "14:05" today, "Sat 14:05" another day (Singapore time). */
+/** "14:05" today, "Sat 14:05" within the week, "8 Nov" before that (Singapore time). */
 export function clock(ms: number, now = Date.now()): string {
+  if (now - ms > 6 * 86_400_000) return new Intl.DateTimeFormat("en-GB", { timeZone: TZ, day: "numeric", month: "short" }).format(ms);
   const time = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit" }).format(ms);
   const a = sgtParts(ms);
   const b = sgtParts(now);
@@ -52,45 +54,37 @@ function agrees(live: 0 | 1 | null, h: ConnectorHistory | null | undefined): h i
   return !!h && live !== null && h.s === live;
 }
 
-/** Short duration for a charger tile: how long it has been in its current state. */
-export function tileDuration(live: 0 | 1 | null, h: ConnectorHistory | null | undefined, now = Date.now()): string | null {
-  return agrees(live, h) && h.since ? shortDuration(now - h.since) : null;
+export interface TileFacts {
+  /** How long in the current state, e.g. "1h 20m". */
+  dur: string | null;
+  /** True when that's a minimum: the state began before we saw it. */
+  atLeast: boolean;
+  /** "since 13:10" when we saw it begin. */
+  since: string | null;
 }
 
-/**
- * The key facts for a charger tile, each short enough for a ~80px box:
- * how long in this state, since when, and how long the previous session ran.
- */
-export function tileFacts(
-  live: 0 | 1 | null,
-  h: ConnectorHistory | null | undefined,
-  trackedFrom: number | null,
-  now = Date.now(),
-): { dur: string | null; since: string | null; prev: string | null } {
-  const ok = agrees(live, h);
-  const since = ok ? (h.since ? `since ${clock(h.since, now)}` : trackedFrom ? `before ${clock(trackedFrom, now)}` : null) : null;
-  const last = h?.last;
-  return {
-    dur: ok && h.since ? shortDuration(now - h.since) : null,
-    since,
-    prev: last?.start ? `prev ${shortDuration(last.end - last.start)}` : last ? `prev ended ${clock(last.end, now)}` : null,
-  };
+/** What a charger tile shows at a glance; empty when history doesn't match the live status. */
+export function tileFacts(live: 0 | 1 | null, h: ConnectorHistory | null | undefined, now = Date.now()): TileFacts {
+  if (!agrees(live, h)) return { dur: null, atLeast: false, since: null };
+  if (h.since) return { dur: shortDuration(now - h.since), atLeast: false, since: `since ${clock(h.since, now)}` };
+  if (h.sinceBefore) return { dur: shortDuration(now - h.sinceBefore), atLeast: true, since: null };
+  return { dur: null, atLeast: false, since: null };
 }
 
 /** One or two sentences about a single charger's current and previous session. */
 export function connectorStory(live: 0 | 1 | null, h: ConnectorHistory | null | undefined, now = Date.now()): string[] {
   const out: string[] = [];
   if (agrees(live, h)) {
-    if (h.since) out.push(`${live === 0 ? "In use" : "Free"} since ${clock(h.since, now)} (${formatDuration(now - h.since)}).`);
-    else out.push(`${live === 0 ? "In use" : "Free"} since before we started tracking it.`);
+    const what = live === 0 ? "In use" : "Free";
+    if (h.since) out.push(`${what} since ${clock(h.since, now)} (${formatDuration(now - h.since)}).`);
+    else if (h.sinceBefore) out.push(`${what} for at least ${formatDuration(now - h.sinceBefore)} (since before ${clock(h.sinceBefore, now)}).`);
   }
-  if (h?.last) {
-    const end = clock(h.last.end, now);
-    out.push(
-      h.last.start
-        ? `Previous session ${clock(h.last.start, now)}–${end} (${formatDuration(h.last.end - h.last.start)}).`
-        : `Previous session ended ${end}.`,
-    );
+  const last = h?.last;
+  if (last) {
+    const end = clock(last.end, now);
+    if (last.start) out.push(`Previous session ${clock(last.start, now)}–${end} (${formatDuration(last.end - last.start)}).`);
+    else if (last.startBefore) out.push(`Previous session ended ${end}, after at least ${formatDuration(last.end - last.startBefore)}.`);
+    else out.push(`Previous session ended ${end}.`);
   }
   return out;
 }
@@ -103,19 +97,20 @@ export function dayProfile(hist: StationHistory, connectorIds: readonly string[]
   });
 }
 
-/** "Usually busiest 6pm–9pm" from the 3-hour window with the highest average, if there's enough data. */
+/** "Busiest 6pm–9pm" from the 3-hour window with the highest average (ties: the one centred on the peak). */
 export function busiestWindow(profile: Array<number | null>): string | null {
   let best = -1;
+  let mid = -1;
   let at = -1;
   for (let h = 0; h + 3 <= 24; h++) {
     const w = profile.slice(h, h + 3);
     if (w.some((v) => v === null)) continue;
     const avg = (w as number[]).reduce((a, b) => a + b, 0) / 3;
-    if (avg > best) [best, at] = [avg, h];
+    if (avg > best + 1e-9 || (Math.abs(avg - best) < 1e-9 && (w[1] as number) > mid)) [best, mid, at] = [avg, w[1] as number, h];
   }
   if (at < 0) return null;
-  if (best < 15) return "Usually quiet all day";
-  return `Usually busiest ${hourLabel(at)}–${hourLabel((at + 3) % 24)}`;
+  if (best < 15) return "Usually quiet";
+  return `Busiest ${hourLabel(at)}–${hourLabel((at + 3) % 24)}`;
 }
 
 /** 24 bars; the current hour is marked when `nowHour` is given. */

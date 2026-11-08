@@ -12,6 +12,11 @@
  * A run reads 3 rows and writes 3–4. Times are minutes since the Unix epoch.
  * States: 1 free, 0 in use, -1 not known yet. A snapshot that doesn't report a
  * connector ("-") leaves its state as it was.
+ *
+ * `since` is when the current state began if we saw it begin ("exact"), else
+ * when we first saw the connector in it: the state began at or before then.
+ * The same goes for `lastStart`. Flags say which: bit 0 for since, bit 1 for
+ * lastStart.
  */
 
 export const SLOTS = 168;
@@ -22,13 +27,19 @@ const RETAIN_MIN = 400 * 24 * 60;
 const SGT_OFFSET_MIN = 8 * 60;
 
 export interface HistoryState {
+  /** Encoding read from storage; 1 = before exact/lower-bound flags existed (see upgradeV1). */
+  version: number;
   n: number;
   lastFeed: number;
   s: Int8Array;
+  flags: Uint8Array;
   since: Uint32Array;
   lastStart: Uint32Array;
   lastEnd: Uint32Array;
 }
+
+export const SINCE_EXACT = 1;
+export const START_EXACT = 2;
 
 export interface Slot {
   busy: Uint8Array;
@@ -43,7 +54,16 @@ export function slotOf(minutes: number): number {
 }
 
 export function emptyState(): HistoryState {
-  return { n: 0, lastFeed: 0, s: new Int8Array(0), since: new Uint32Array(0), lastStart: new Uint32Array(0), lastEnd: new Uint32Array(0) };
+  return {
+    version: 2,
+    n: 0,
+    lastFeed: 0,
+    s: new Int8Array(0),
+    flags: new Uint8Array(0),
+    since: new Uint32Array(0),
+    lastStart: new Uint32Array(0),
+    lastEnd: new Uint32Array(0),
+  };
 }
 
 function grow<T extends Int8Array | Uint8Array | Uint32Array>(a: T, n: number, fill = 0): T {
@@ -56,20 +76,32 @@ function grow<T extends Int8Array | Uint8Array | Uint32Array>(a: T, n: number, f
 
 export function growState(st: HistoryState, n: number): HistoryState {
   if (n <= st.n) return st;
-  return { n, lastFeed: st.lastFeed, s: grow(st.s, n, -1), since: grow(st.since, n), lastStart: grow(st.lastStart, n), lastEnd: grow(st.lastEnd, n) };
+  return {
+    version: st.version,
+    n,
+    lastFeed: st.lastFeed,
+    s: grow(st.s, n, -1),
+    flags: grow(st.flags, n),
+    since: grow(st.since, n),
+    lastStart: grow(st.lastStart, n),
+    lastEnd: grow(st.lastEnd, n),
+  };
 }
 
-// Binary layout: uint32 [version, n, lastFeed], then s padded to 4 bytes, since, lastStart, lastEnd.
+// Binary layout (v2): uint32 [2, n, lastFeed], then s and flags (n bytes each,
+// padded together to 4 bytes), then since, lastStart, lastEnd as uint32.
+// v1 had no flags: uint32 [1, n, lastFeed], s padded to 4, then the three arrays.
 export function encodeState(st: HistoryState): Uint8Array {
-  const pad = (st.n + 3) & ~3;
-  const buf = new ArrayBuffer(12 + pad + st.n * 12);
-  const head = new Uint32Array(buf, 0, 3);
-  head.set([1, st.n, st.lastFeed]);
-  new Int8Array(buf, 12, st.n).set(st.s.subarray(0, st.n));
+  const n = st.n;
+  const pad = (2 * n + 3) & ~3;
+  const buf = new ArrayBuffer(12 + pad + n * 12);
+  new Uint32Array(buf, 0, 3).set([2, n, st.lastFeed]);
+  new Int8Array(buf, 12, n).set(st.s.subarray(0, n));
+  new Uint8Array(buf, 12 + n, n).set(st.flags.subarray(0, n));
   let o = 12 + pad;
   for (const a of [st.since, st.lastStart, st.lastEnd]) {
-    new Uint32Array(buf, o, st.n).set(a.subarray(0, st.n));
-    o += st.n * 4;
+    new Uint32Array(buf, o, n).set(a.subarray(0, n));
+    o += n * 4;
   }
   return new Uint8Array(buf);
 }
@@ -78,15 +110,46 @@ export function decodeState(bytes: Uint8Array | null): HistoryState {
   if (!bytes || bytes.byteLength < 12) return emptyState();
   const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const [version, n, lastFeed] = new Uint32Array(buf, 0, 3);
-  const pad = (n + 3) & ~3;
-  if (version !== 1 || buf.byteLength !== 12 + pad + n * 12) return emptyState();
+  const pad = version === 2 ? (2 * n + 3) & ~3 : (n + 3) & ~3;
+  if ((version !== 1 && version !== 2) || buf.byteLength !== 12 + pad + n * 12) return emptyState();
   let o = 12 + pad;
   const next = () => {
     const a = new Uint32Array(buf.slice(o, o + n * 4));
     o += n * 4;
     return a;
   };
-  return { n, lastFeed, s: new Int8Array(buf.slice(12, 12 + n)), since: next(), lastStart: next(), lastEnd: next() };
+  const s = new Int8Array(buf.slice(12, 12 + n));
+  let flags: Uint8Array;
+  if (version === 2) flags = new Uint8Array(buf.slice(12 + n, 12 + 2 * n));
+  else flags = new Uint8Array(n);
+  const st: HistoryState = { version, n, lastFeed, s, flags, since: next(), lastStart: next(), lastEnd: next() };
+  if (version === 1) {
+    // v1 stored 0 for "not seen beginning"; any other value was an observed change.
+    for (let k = 0; k < n; k++) flags[k] = (st.since[k] ? SINCE_EXACT : 0) | (st.lastStart[k] ? START_EXACT : 0);
+  }
+  return st;
+}
+
+/**
+ * v1 state kept 0 where a state began before we saw it. Replace that with when
+ * we first saw the connector (its first entry in the change log), so it can be
+ * shown as a lower bound: "in use for at least 1 h 20 min".
+ */
+export function upgradeV1(st: HistoryState, changeRows: Array<{ ts: number; data: Uint8Array }>): void {
+  const firstSeen = new Uint32Array(st.n);
+  for (const row of [...changeRows].sort((a, b) => a.ts - b.ts)) {
+    const dv = new DataView(row.data.buffer, row.data.byteOffset, row.data.byteLength);
+    for (let o = 0; o + 5 <= row.data.byteLength; o += 5) {
+      const k = dv.getUint32(o, true);
+      if (k < st.n && !firstSeen[k]) firstSeen[k] = row.ts;
+    }
+  }
+  for (let k = 0; k < st.n; k++) {
+    const seen = firstSeen[k] || st.lastFeed;
+    if (st.s[k] !== -1 && !(st.flags[k] & SINCE_EXACT)) st.since[k] = seen;
+    if (st.lastEnd[k] && !(st.flags[k] & START_EXACT)) st.lastStart[k] = seen;
+  }
+  st.version = 2;
 }
 
 /**
@@ -103,12 +166,14 @@ export function applyStatus(st: HistoryState, index: Uint32Array, status: string
     const prev = st.s[k];
     if (prev === cur) continue;
     if (prev === 0 && cur === 1) {
-      // A session ended: it ran from `since` (if we saw it start) until now.
+      // A session ended: it ran from `since` (exact, or at or before it) until now.
       st.lastStart[k] = st.since[k];
       st.lastEnd[k] = now;
+      st.flags[k] = (st.flags[k] & ~START_EXACT) | (st.flags[k] & SINCE_EXACT ? START_EXACT : 0);
     }
-    // Only a change we saw happen has a known time; the first sighting doesn't.
-    st.since[k] = prev === -1 ? 0 : now;
+    // A change we saw happen has an exact time; a first sighting is only a lower bound.
+    st.since[k] = now;
+    st.flags[k] = prev === -1 ? st.flags[k] & ~SINCE_EXACT : st.flags[k] | SINCE_EXACT;
     st.s[k] = cur;
     changes.push([k, cur]);
   }
@@ -171,6 +236,13 @@ export async function recordSnapshot(db: D1Database, ids: readonly string[], sta
   const known: string[] = JSON.parse(toText(rows.find((r) => r.k === "ids")?.v) || "[]");
   let st = decodeState(toBytes(rows.find((r) => r.k === "state")?.v));
   if (now <= st.lastFeed) return { recorded: false, reason: "already recorded" };
+  if (st.version === 1) {
+    const log = await db.prepare("SELECT ts, data FROM changes ORDER BY ts").all<{ ts: number; data: unknown }>();
+    upgradeV1(
+      st,
+      log.results.map((r) => ({ ts: r.ts, data: toBytes(r.data) ?? new Uint8Array(0) })),
+    );
+  }
 
   const pos = new Map(known.map((id, i) => [id, i]));
   const index = new Uint32Array(ids.length);
@@ -213,8 +285,10 @@ export interface ConnectorHistory {
   s: 0 | 1 | null;
   /** When the current state began (epoch ms), if we saw it begin. */
   since: number | null;
-  /** The last complete session we saw: start may be null if it began before we saw it. */
-  last: { start: number | null; end: number } | null;
+  /** Otherwise: the state began at or before this time (when we first saw it). */
+  sinceBefore: number | null;
+  /** The last complete session: start if we saw it begin, else startBefore (began at or before). */
+  last: { start: number | null; startBefore: number | null; end: number } | null;
   /** % of samples in use for each hour of the week (0 = Monday 00:00 SGT); null where too few samples. */
   busy: Array<number | null>;
 }
@@ -272,10 +346,16 @@ export async function readHistory(db: D1Database, ids: readonly string[], nowMs 
       continue;
     }
     const s = st.s[k];
+    const sinceExact = (st.flags[k] & SINCE_EXACT) !== 0;
+    const startExact = (st.flags[k] & START_EXACT) !== 0;
     connectors[id] = {
       s: s === 1 ? 1 : s === 0 ? 0 : null,
-      since: ms(st.since[k]),
-      last: st.lastEnd[k] ? { start: ms(st.lastStart[k]), end: st.lastEnd[k] * 60_000 } : null,
+      since: sinceExact ? ms(st.since[k]) : null,
+      // v1 state not yet upgraded holds 0 here: fall back to the first recording.
+      sinceBefore: !sinceExact && s !== -1 ? (ms(st.since[k]) ?? from) : null,
+      last: st.lastEnd[k]
+        ? { start: startExact ? ms(st.lastStart[k]) : null, startBefore: startExact ? null : (ms(st.lastStart[k]) ?? from), end: st.lastEnd[k] * 60_000 }
+        : null,
       busy: slotMemo.slots.map((sl) => {
         const seen = sl && k < sl.seen.length ? sl.seen[k] : 0;
         return seen >= 3 ? Math.round((100 * sl!.busy[k]) / seen) : null;

@@ -4,7 +4,7 @@ import "@fontsource/space-grotesk/700.css";
 import "./styles.css";
 
 import { loadChargers, loadDemo, loadHistory, searchPlaces, type DataMode, type Place, type StationHistory } from "./api.ts";
-import { DAYS, busiestWindow, chartHtml, connectorStory, dayProfile, sgtParts, tileFacts } from "./history-view.ts";
+import { DAYS, busiestWindow, chartHtml, clock, connectorStory, dayProfile, sgtParts, tileFacts } from "./history-view.ts";
 import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT } from "./icons.ts";
 import { ChargeMap, SG_CENTER, type Theme } from "./map.ts";
 import {
@@ -597,18 +597,23 @@ function busyHoursHtml(st: StationVM, hist: StationHistory): string {
   const ids = pick.cid ? [pick.cid] : connectorIdsOf(st);
   const today = sgtParts(Date.now());
   const profile = dayProfile(hist, ids, pick.day);
-  const any = profile.some((v) => v !== null);
+  const known = profile.filter((v) => v !== null).length;
+  // Only name a busiest window once most of the day has been seen.
+  const sum = known === 0 ? "No data for this day yet" : known >= 20 ? (busiestWindow(profile) ?? "Still learning") : `Still learning · ${known} of 24 hours`;
   const live = pick.cid ? groupPlugs(st).flatMap((g) => g.connectors).find((c) => c.id === pick.cid) : null;
-  const who = live ? (live.position ? `lot ${live.position}` : `charger ${pick.cid!.slice(-6)}`) : "all chargers here";
+  const who = live
+    ? `${escapeHtml(live.position ? `Lot ${live.position}` : `Charger ${pick.cid!.slice(-6)}`)} · <button type="button" class="linkish" data-act="cell" data-cid="${escapeHtml(pick.cid!)}">Show all</button>`
+    : "All chargers · tap one to see it alone";
   const since = hist.from ? new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Singapore", day: "numeric", month: "short" }).format(hist.from) : "";
   return `<h3 class="section-h">Busy hours</h3>
     <section class="bh">
       <div class="bh__days" role="group" aria-label="Day of the week">${DAYS.map(
         (d, i) => `<button type="button" class="chip bh__day${i === today.day ? " is-today" : ""}" data-act="day" data-day="${i}" aria-pressed="${i === pick.day}"${i === today.day ? ` aria-label="${d} (today)"` : ""}>${d}</button>`,
       ).join("")}</div>
-      <p class="bh__sum">${escapeHtml(any ? (busiestWindow(profile) ?? "Still learning this day's pattern") : "Still learning — check back in a week or two")} <small>· ${escapeHtml(who)}${pick.cid ? ` · <button type="button" class="linkish" data-act="cell" data-cid="${escapeHtml(pick.cid)}">show all</button>` : " · tap a charger to see just that one"}</small></p>
+      <p class="bh__sum">${escapeHtml(sum)}</p>
+      <p class="bh__who">${who}</p>
       ${chartHtml(profile, pick.day === today.day ? today.hour : null)}
-      <p class="bh__foot">% of the time in use, from LTA availability every 5 minutes${since ? `, recorded since ${escapeHtml(since)}` : ""}. Singapore time.</p>
+      <p class="bh__foot">Share of time in use each hour, Singapore time${since ? ` · since ${escapeHtml(since)}` : ""}</p>
     </section>`;
 }
 
@@ -681,20 +686,20 @@ function renderDetail(id: string, animate: boolean): void {
             </span>
             ${groupPriceHtml(ep)}
           </div>
-          <div class="cells">
+          <div class="cells${hist ? " has-facts" : ""}">
             ${g.connectors
               .map((c, ci) => {
                 const cls = c.s === 1 ? "free" : c.s === 0 ? "busy" : "offline";
                 const lbl = c.s === 1 ? "Free" : c.s === 0 ? "In use" : "Offline";
-                const facts = hist ? tileFacts(c.s, hist.connectors[c.id], hist.from) : null;
-                const dur = facts?.dur ?? null;
+                const facts = hist ? tileFacts(c.s, hist.connectors[c.id]) : null;
+                const dur = facts?.dur ? `${facts.dur}${facts.atLeast ? "+" : ""}` : null;
                 const picked = state.histPick.cid === c.id;
                 const tag = hist ? "button" : "div";
                 const act = hist ? ` type="button" data-act="cell" data-cid="${escapeHtml(c.id)}" aria-pressed="${picked}"` : "";
-                const extra = [facts?.since, facts?.prev].filter(Boolean) as string[];
-                const aria = [`${lbl}${dur ? ` for ${dur}` : ""}`, ...extra.map((x) => x.replace(/^prev /, "previous session ")), c.position ? `lot ${c.position}` : ""].filter(Boolean).join(", ");
-                return `<${tag}${act} class="cell cell--${cls}${picked ? " is-picked" : ""}${hist ? " has-facts" : ""}" style="--delay:${animate ? 200 + (gi * 4 + ci) * 40 : 0}ms" title="${escapeHtml(c.id)}" aria-label="${escapeHtml(aria)}">
-                  <b>${lbl}${dur ? `<em class="cell__dur">${dur}</em>` : ""}</b>${extra.map((x) => `<small class="cell__fact">${escapeHtml(x)}</small>`).join("")}<span>${escapeHtml(c.position || c.id.slice(-6) || "—")}</span></${tag}>`;
+                const spoken = facts?.dur ? `${facts.atLeast ? " for at least " : " for "}${facts.dur}${facts.since ? `, ${facts.since}` : ""}` : "";
+                const aria = `${lbl}${spoken}${c.position ? `, lot ${c.position}` : ""}`;
+                return `<${tag}${act} class="cell cell--${cls}${picked ? " is-picked" : ""}" style="--delay:${animate ? 200 + (gi * 4 + ci) * 40 : 0}ms" title="${escapeHtml(c.id)}" aria-label="${escapeHtml(aria)}">
+                  <b>${lbl}</b>${hist ? `<strong class="cell__dur">${dur ? escapeHtml(dur) : ""}</strong><small class="cell__since">${escapeHtml(facts?.since ?? "")}</small>` : ""}<span>${escapeHtml(c.position || c.id.slice(-6) || "—")}</span></${tag}>`;
               })
               .join("")}
           </div>
@@ -702,6 +707,11 @@ function renderDetail(id: string, animate: boolean): void {
         </section>`;
       })
       .join("")}
+    ${
+      hist?.from && groups.some((g) => g.connectors.some((c) => tileFacts(c.s, hist.connectors[c.id]).atLeast))
+        ? `<p class="cells-note"><b>+</b> at least that long: unchanged since tracking began (${escapeHtml(clock(hist.from))})</p>`
+        : ""
+    }
     ${hist ? busyHoursHtml(st, hist) : ""}
     <p class="detail__foot">
       ${st.points[0]?.hours ? `Hours: ${escapeHtml(st.points[0].hours)}<br/>` : ""}

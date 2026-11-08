@@ -229,8 +229,11 @@ function titleCase(s: string): string {
 
 export interface ConnectorHistory {
   s: 0 | 1 | null;
+  /** When the current state began, if seen. */
   since: number | null;
-  last: { start: number | null; end: number } | null;
+  /** Otherwise it began at or before this (when first seen). */
+  sinceBefore: number | null;
+  last: { start: number | null; startBefore: number | null; end: number } | null;
   /** % of the time in use, per hour of the week (0 = Monday 00:00 SGT); null = not enough data. */
   busy: Array<number | null>;
 }
@@ -252,7 +255,8 @@ function sanitizeConnector(v: unknown): ConnectorHistory | null {
   return {
     s: o.s === 0 || o.s === 1 ? o.s : null,
     since: t(o.since),
-    last: last && end ? { start: t(last.start), end } : null,
+    sinceBefore: t(o.sinceBefore),
+    last: last && end ? { start: t(last.start), startBefore: t(last.startBefore), end } : null,
     busy: Array.from({ length: 168 }, (_, i) => {
       const b = busy[i];
       return typeof b === "number" && b >= 0 && b <= 100 ? b : null;
