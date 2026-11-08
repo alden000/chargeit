@@ -2692,7 +2692,7 @@ button.cell {
   color: var(--muted);
 }
 .segmented--small {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   background: var(--ink-900);
 }
 .segmented--small button {

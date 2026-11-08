@@ -628,7 +628,7 @@ test.describe("charger alerts", () => {
     await page.getByRole("button", { name: "Charger alerts" }).click();
     const panel = page.locator(".alert-panel");
     await expect(panel).toBeVisible();
-    await panel.getByRole("radio", { name: "A charger is taken" }).click();
+    await panel.getByRole("radio", { name: "Is taken" }).click();
     await panel.getByRole("button", { name: "2 h" }).click();
     await panel.getByRole("button", { name: "Start alert" }).click();
     await expect(page.locator("#toast")).toContainText("Alert on: any charger is taken at Clarke Quay, for 2 h.");
@@ -669,5 +669,58 @@ test.describe("charger alerts", () => {
     await page.getByRole("button", { name: "Charger alerts" }).click();
     await expect(page.locator(".alert-panel__note")).toContainText("Add to Home Screen");
     await expect(page.getByRole("button", { name: "Start alert" })).toBeDisabled();
+  });
+});
+
+test.describe("system Back button", () => {
+  test("closes one layer at a time and never leaves the app", async ({ page, api: _ }) => {
+    await page.goto("/");
+    await ready(page);
+    await page.locator(".card").first().click();
+    await expect(page.locator("#view-detail")).toBeVisible();
+    await expect(page).toHaveURL(/#s=/);
+
+    await page.getByRole("button", { name: "Charger alerts" }).click();
+    await expect(page.locator(".alert-panel")).toBeVisible();
+    await page.goBack();
+    await expect(page.locator(".alert-panel")).toHaveCount(0);
+    await expect(page.locator("#view-detail")).toBeVisible();
+
+    await page.goBack();
+    await expect(page.locator("#view-detail")).toBeHidden();
+    await expect(page.locator("#view-list")).toBeVisible();
+    expect(new URL(page.url()).hash).toBe("");
+
+    await page.getByRole("button", { name: "Settings" }).click();
+    await expect(page.locator("#settings")).toBeVisible();
+    await page.goBack();
+    await expect(page.locator("#settings")).toBeHidden();
+    await expect(page.locator(".card").first()).toBeVisible(); // still in the app
+  });
+
+  test("a shared station link goes back to the map, not out of the app", async ({ page, api: _ }) => {
+    await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+    await expect(page.locator("#view-detail h2")).toHaveText("Clarke Quay");
+    await page.goBack();
+    await expect(page.locator("#view-detail")).toBeHidden();
+    await expect(page.locator(".card").first()).toBeVisible();
+  });
+
+  test("closing with on-screen buttons doesn't pile up history", async ({ page, api: _ }) => {
+    await page.goto("/");
+    await ready(page);
+    const start = await page.evaluate(() => history.length);
+    for (let i = 0; i < 3; i++) {
+      await page.locator(".card").first().click();
+      await expect(page.locator("#view-detail")).toBeVisible();
+      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(page.locator("#view-detail")).toBeHidden();
+    }
+    await page.waitForTimeout(300);
+    // Each open adds one entry and each close removes it again (forward entries may remain).
+    expect(await page.evaluate(() => history.length)).toBeLessThanOrEqual(start + 1);
+    await page.goBack();
+    await page.waitForTimeout(300);
+    await expect(page.locator("#view-detail")).toBeHidden(); // Back doesn't resurrect a closed station
   });
 });

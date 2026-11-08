@@ -27,7 +27,8 @@ export interface WatchInput {
   name: string;
   connectors: string[];
   labels: Record<string, string>;
-  event: 0 | 1;
+  /** 1 = alert when one becomes free, 0 = when one is taken, 2 = either. */
+  event: 0 | 1 | 2;
   minutes: number;
   once: boolean;
 }
@@ -55,7 +56,7 @@ export function parseWatch(body: unknown): WatchInput | string {
     const l = str(rawLabels[c], 200);
     if (l) labels[c] = l.trim().slice(0, 24);
   }
-  if (o.event !== 0 && o.event !== 1) return "invalid event";
+  if (o.event !== 0 && o.event !== 1 && o.event !== 2) return "invalid event";
   const minutes = typeof o.minutes === "number" && Number.isFinite(o.minutes) ? Math.round(o.minutes) : NaN;
   if (!(minutes >= MIN_MINUTES && minutes <= MAX_MINUTES)) return "invalid duration";
   return { endpoint, p256dh, auth, station, name, connectors, labels, event: o.event, minutes, once: o.once !== false };
@@ -125,14 +126,17 @@ export function matchAlerts(rows: WatchRow[], changed: ReadonlyMap<string, 0 | 1
     } catch {
       continue;
     }
-    const hits = connectors.filter((c) => changed.get(c) === w.event);
+    const hits = connectors.filter((c) => changed.has(c) && (w.event === 2 || changed.get(c) === w.event));
     if (!hits.length) continue;
-    const named = hits.map((c) => labels[c]).filter(Boolean);
-    const what = w.event === 1 ? "free" : "taken";
-    const who =
-      named.length === hits.length && named.length <= 3
-        ? `${named.join(", ")} ${hits.length > 1 ? "are" : "is"} ${what}`
-        : `${hits.length} charger${hits.length > 1 ? "s" : ""} ${hits.length > 1 ? "are" : "is"} ${what}`;
+    const freed = hits.filter((c) => changed.get(c) === 1);
+    const taken = hits.filter((c) => changed.get(c) === 0);
+    const phrase = (ids: string[], what: string) => {
+      const named = ids.map((c) => labels[c]).filter(Boolean);
+      const verb = ids.length > 1 ? "are" : "is";
+      return named.length === ids.length && named.length <= 3 ? `${named.join(", ")} ${verb} ${what}` : `${ids.length} charger${ids.length > 1 ? "s" : ""} ${verb} ${what}`;
+    };
+    const who = [freed.length ? phrase(freed, "free") : "", taken.length ? phrase(taken, "taken") : ""].filter(Boolean).join("; ");
+    const title = freed.length && taken.length ? "Chargers changed" : freed.length ? "Charger free" : "Charger taken";
     out.push({
       id: w.id,
       once: w.once === 1,
@@ -140,7 +144,7 @@ export function matchAlerts(rows: WatchRow[], changed: ReadonlyMap<string, 0 | 1
       p256dh: w.p256dh,
       auth: w.auth,
       payload: {
-        title: w.event === 1 ? `Charger free · ${w.name}` : `Charger taken · ${w.name}`,
+        title: `${title} · ${w.name}`,
         body: `${who} now.`,
         tag: `chargeit-${w.id}`,
         url: `./#s=${encodeURIComponent(w.station)}`,

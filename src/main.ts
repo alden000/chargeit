@@ -6,6 +6,7 @@ import "./styles.css";
 import { loadChargers, loadDemo, loadHistory, searchPlaces, type DataMode, type Place, type StationHistory } from "./api.ts";
 import { DAYS, busiestWindow, chartHtml, clock, connectorStory, dayProfile, sgtParts, tileFacts } from "./history-view.ts";
 import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT, BELL } from "./icons.ts";
+import { closeAbove, closeLayer, hasLayer, isSettling, openLayer, replaceUrl } from "./backstack.ts";
 import { loadWatches, pushSupport, startWatch, stopWatch as stopAlertWatch, syncWatches, type AlertEvent, type LocalWatch } from "./alerts.ts";
 import { ChargeMap, SG_CENTER, type Theme } from "./map.ts";
 import {
@@ -480,7 +481,15 @@ function openDetail(id: string, opts: { fly: boolean }): void {
   const wasOpen = !!state.selected;
   state.selected = id;
   cmap.select(id);
-  writeHash(id);
+  if (hasLayer("detail")) {
+    // Switching station: close panels on the old one, then just change the URL.
+    closeAbove("detail");
+    replaceUrl(hashUrl(id));
+  } else {
+    // Back from here returns to the map/list, whether we came from it or a shared link.
+    replaceUrl(hashUrl(null));
+    openLayer("detail", () => closeDetail(true), hashUrl(id));
+  }
   ensureHistory(id);
   withViewTransition(() => {
     renderDetail(id, !wasOpen);
@@ -497,12 +506,16 @@ function openDetail(id: string, opts: { fly: boolean }): void {
   else cmap.flyTo([st.lng, st.lat], Math.max(cmap.map.getZoom(), 15), pad);
 }
 
-function closeDetail(): void {
+function closeDetail(fromBack = false): void {
   if (!state.selected) return;
   const id = state.selected;
   state.selected = null;
+  state.alertUi = { ...state.alertUi, open: false, busy: false, error: "" };
   cmap.select(null);
-  writeHash(null);
+  if (!fromBack) {
+    if (hasLayer("detail")) closeLayer("detail");
+    else writeHash(null);
+  }
   void withViewTransition(() => {
     detailView.hidden = true;
     detailView.dataset.sig = "";
@@ -604,7 +617,8 @@ function stationWatches(id: string): LocalWatch[] {
 }
 
 function watchText(w: Pick<LocalWatch, "what" | "event">): string {
-  return `${w.what === "any charger" ? "Any charger" : w.what[0].toUpperCase() + w.what.slice(1)} ${w.event === 1 ? "frees up" : "is taken"}`;
+  const who = w.what === "any charger" ? "Any charger" : w.what[0].toUpperCase() + w.what.slice(1);
+  return `${who} ${w.event === 1 ? "frees up" : w.event === 0 ? "is taken" : "changes (free or taken)"}`;
 }
 
 function minutesLeft(ms: number): string {
@@ -653,10 +667,11 @@ function alertsHtml(st: StationVM): string {
             ? "Alerts need live data. Switch out of the demo first."
             : "This browser can't receive alerts. Try Chrome, Edge, Firefox or Safari.";
   return `${list}<section class="alert-panel" aria-label="Set a charger alert">
-      <p class="alert-panel__h">Notify me when</p>
+      <p class="alert-panel__h">Notify me when a charger</p>
       ${seg("alert-event", [
-        ["1", "A charger frees up", ui.event === 1],
-        ["0", "A charger is taken", ui.event === 0],
+        ["1", "Frees up", ui.event === 1],
+        ["0", "Is taken", ui.event === 0],
+        ["2", "Either", ui.event === 2],
       ])}
       ${
         picked
@@ -700,6 +715,7 @@ async function createAlert(st: StationVM): Promise<void> {
     });
     state.watches = loadWatches();
     state.alertUi = { ...ui, open: false, busy: false, error: "" };
+    closeLayer("alert");
     refreshDetail(st.id);
     toast(`Alert on: ${watchText(w).toLowerCase()} at ${st.name}, for ${ALERT_MINUTES.find(([m]) => m === ui.minutes)?.[1] ?? `${ui.minutes} min`}.`);
     haptic(12);
@@ -747,7 +763,7 @@ function busyHoursHtml(st: StationVM, hist: StationHistory): string {
 function refreshDetail(id: string): void {
   const st = state.byId.get(id);
   if (!st || detailView.dataset.sig === detailSig(st)) return;
-  const menuOpen = !detailView.querySelector<HTMLElement>(".nav-menu")?.hidden;
+  const menuOpen = detailView.querySelector<HTMLElement>(".nav-menu")?.hidden === false;
   const focused = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>("#view-detail [data-act]");
   const focusAct = focused?.dataset.act;
   // Charger tiles and day chips share an action; find the same one again.
@@ -880,11 +896,17 @@ detailView.addEventListener("click", (e) => {
       break;
     case "alert":
       state.alertUi = { ...state.alertUi, open: !state.alertUi.open, error: "", one: !!state.histPick.cid };
-      if (state.alertUi.open) void syncWatches().then((ws) => ((state.watches = ws), refreshDetail(st.id)));
+      if (state.alertUi.open) {
+        openLayer("alert", () => {
+          state.alertUi = { ...state.alertUi, open: false, error: "" };
+          if (state.selected) refreshDetail(state.selected);
+        });
+        void syncWatches().then((ws) => ((state.watches = ws), refreshDetail(st.id)));
+      } else closeLayer("alert");
       refreshDetail(st.id);
       break;
     case "alert-event":
-      state.alertUi.event = btn.dataset.v === "0" ? 0 : 1;
+      state.alertUi.event = btn.dataset.v === "0" ? 0 : btn.dataset.v === "2" ? 2 : 1;
       refreshDetail(st.id);
       break;
     case "alert-scope":
@@ -929,8 +951,13 @@ function toggleNavMenu(st: StationVM): void {
   const menu = detailView.querySelector<HTMLElement>(".nav-menu")!;
   if (!menu.hidden) {
     menu.hidden = true;
+    closeLayer("nav");
     return;
   }
+  openLayer("nav", () => {
+    const m = detailView.querySelector<HTMLElement>(".nav-menu");
+    if (m) m.hidden = true;
+  });
   const dest = `${st.lat},${st.lng}`;
   const links = [
     ["Google Maps", `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`],
@@ -970,14 +997,19 @@ function readHash(): string | null {
   }
 }
 window.addEventListener("hashchange", () => {
+  // Our own Back handling changes the hash too; only react to links/typed URLs.
+  if (isSettling()) return;
   const id = readHash();
   if (id && id !== state.selected && state.byId.has(id)) openDetail(id, { fly: true });
-  else if (!id && state.selected) closeDetail();
+  else if (!id && state.selected) closeDetail(true);
 });
-function writeHash(id: string | null): void {
+function hashUrl(id: string | null): string {
   const url = new URL(location.href);
   url.hash = id ? `s=${encodeURIComponent(id)}` : "";
-  history.replaceState(null, "", url.hash ? url : url.pathname + url.search);
+  return url.hash ? url.href : url.pathname + url.search;
+}
+function writeHash(id: string | null): void {
+  history.replaceState(history.state, "", hashUrl(id));
 }
 
 // ── Filters ─────────────────────────────────────────────────────────────
@@ -1130,17 +1162,19 @@ function openPriceMenu(anchorEl: HTMLElement): void {
     input.value = String(any);
     apply(any);
   });
-  m.querySelector("[data-done]")!.addEventListener("click", closeMenus);
+  m.querySelector("[data-done]")!.addEventListener("click", () => closeMenus());
   menuEl = m;
+  openLayer("menu", () => closeMenus(true));
   input.focus();
 }
 
 let menuEl: HTMLElement | null = null;
 let menuAnchor: string | null = null;
-function closeMenus(): void {
+function closeMenus(fromBack = false): void {
   menuEl?.remove();
   menuEl = null;
   menuAnchor = null;
+  if (!fromBack) closeLayer("menu");
 }
 function openMenu(
   anchorEl: HTMLElement,
@@ -1187,6 +1221,7 @@ function openMenu(
     }
   });
   menuEl = m;
+  openLayer("menu", () => closeMenus(true));
   m.querySelector<HTMLInputElement>("input")?.focus();
 }
 document.addEventListener("pointerdown", (e) => {
@@ -1261,6 +1296,10 @@ function renderRecents(): void {
   searchResults.hidden = false;
   searchInput.setAttribute("aria-expanded", "true");
   topbarEl.classList.add("is-searching"); // dropdown floats above the sheet, focused or not
+  openLayer("search", () => {
+    hideResults(true);
+    searchInput.blur();
+  });
   activeIdx = -1;
 }
 
@@ -1331,6 +1370,10 @@ function renderResults(stations: StationVM[], places: Place[] | null, q: string)
   searchResults.hidden = false;
   searchInput.setAttribute("aria-expanded", "true");
   topbarEl.classList.add("is-searching"); // dropdown floats above the sheet, focused or not
+  openLayer("search", () => {
+    hideResults(true);
+    searchInput.blur();
+  });
   activeIdx = -1;
 }
 
@@ -1347,10 +1390,11 @@ function addPlaceResults(places: Place[], q: string): void {
   activeIdx = active ? [...searchResults.querySelectorAll(".search__item")].indexOf(active) : -1;
 }
 
-function hideResults(): void {
+function hideResults(fromBack = false): void {
   searchResults.hidden = true;
   searchInput.setAttribute("aria-expanded", "false");
   topbarEl.classList.remove("is-searching");
+  if (!fromBack) closeLayer("search");
 }
 
 function pickResult(li: HTMLElement): void {
@@ -1659,10 +1703,12 @@ function openSettings(): void {
   renderThemeChoice();
   settingsEl.showModal();
   settingsEl.classList.remove("is-closing");
+  openLayer("settings", () => closeSettings(true));
   haptic(6);
 }
-function closeSettings(): void {
+function closeSettings(fromBack = false): void {
   if (!settingsEl.open) return;
+  if (!fromBack) closeLayer("settings");
   if (reducedMotion()) {
     settingsEl.close();
     return;

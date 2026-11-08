@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS watches (
   name TEXT NOT NULL,       -- station name, for the notification text
   connectors TEXT NOT NULL, -- JSON array of watched connector ids
   labels TEXT NOT NULL,     -- JSON {connector id: lot label}
-  event INTEGER NOT NULL,   -- 1 = alert when one becomes free, 0 = when one is taken
+  event INTEGER NOT NULL,   -- 1 = alert when one becomes free, 0 = when one is taken, 2 = either
   once INTEGER NOT NULL,    -- 1 = stop after the first alert
   expires INTEGER NOT NULL, -- minutes since epoch
   created INTEGER NOT NULL

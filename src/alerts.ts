@@ -6,7 +6,7 @@
  */
 import { API_BASE } from "./api.ts";
 
-export type AlertEvent = 0 | 1; // 1 = becomes free, 0 = is taken
+export type AlertEvent = 0 | 1 | 2; // 1 = becomes free, 0 = is taken, 2 = either
 
 export interface LocalWatch {
   id: string;
@@ -34,7 +34,7 @@ export function loadWatches(now = Date.now()): LocalWatch[] {
           typeof w.station === "string" &&
           typeof w.name === "string" &&
           typeof w.what === "string" &&
-          (w.event === 0 || w.event === 1) &&
+          (w.event === 0 || w.event === 1 || w.event === 2) &&
           typeof w.expires === "number",
       )
       .map((w) => ({ id: w.id, station: w.station.slice(0, 40), name: w.name.slice(0, 80), what: w.what.slice(0, 40), event: w.event, expires: w.expires }))

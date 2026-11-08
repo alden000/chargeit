@@ -14,7 +14,7 @@ describe("alerts: watch requests", () => {
     expect(parseWatch({ ...ok, station: "../etc" })).toBe("invalid station");
     expect(parseWatch({ ...ok, connectors: [] })).toBe("invalid connectors");
     expect(parseWatch({ ...ok, connectors: ["<script>"] })).toBe("invalid connectors");
-    expect(parseWatch({ ...ok, event: 2 })).toBe("invalid event");
+    expect(parseWatch({ ...ok, event: 3 })).toBe("invalid event");
     expect(parseWatch({ ...ok, minutes: 5 })).toBe("invalid duration");
     expect(parseWatch({ ...ok, minutes: 24 * 60 })).toBe("invalid duration");
     expect(parseWatch(null)).toBe("body must be an object");
@@ -39,6 +39,15 @@ describe("alerts: matching changes to watches", () => {
     expect(a.payload).toEqual({ title: "Charger free · Blk 532 MSCP", body: "L3A 82 is free now.", tag: "chargeit-w1", url: "./#s=532002" });
     expect(matchAlerts([row({ event: 0 })], changed)[0].payload.body).toBe("1 charger is taken now."); // R1-003 has no label
     expect(matchAlerts([row({})], new Map([["R9-001", 1 as const]]))).toEqual([]);
+  });
+
+  it("'either' reports frees and takes together", () => {
+    const changed = new Map<string, 0 | 1>([["R1-001", 1], ["R1-002", 0]]);
+    const [a] = matchAlerts([row({ event: 2 })], changed);
+    expect(a.payload.title).toBe("Chargers changed · Blk 532 MSCP");
+    expect(a.payload.body).toBe("L3A 82 is free; L3A 83 is taken now.");
+    expect(matchAlerts([row({ event: 2 })], new Map([["R1-002", 0 as const]]))[0].payload.title).toBe("Charger taken · Blk 532 MSCP");
+    expect(parseWatch({ ...ok, event: 2 })).toMatchObject({ event: 2 });
   });
 
   it("several at once, and broken rows are skipped", () => {
