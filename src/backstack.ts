@@ -30,6 +30,34 @@ function silentBack(n: number): void {
   });
 }
 
+/** The most recently opened layer, if any. */
+export function topLayer(): string | null {
+  return layers.at(-1)?.name ?? null;
+}
+
+let onExitAttempt: (() => void) | null = null;
+let rearm = 0;
+
+/**
+ * Back on the app's base screen asks before leaving: the first press shows a
+ * hint (onAttempt), a second press within `windowMs` leaves the app. Works by
+ * keeping one spare "guard" entry above the app's first history entry.
+ */
+export function installExitGuard(baseUrl: string, onAttempt: () => void): void {
+  onExitAttempt = onAttempt;
+  history.replaceState({ chargeitBase: true }, "", baseUrl);
+  history.pushState({ chargeitGuard: true }, "", baseUrl);
+}
+
+function exitAttempt(windowMs = 2500): void {
+  // Now on the base entry: a second Back leaves. Re-arm the guard if they don't.
+  onExitAttempt?.();
+  clearTimeout(rearm);
+  rearm = window.setTimeout(() => {
+    if (!layers.length && history.state?.chargeitBase) history.pushState({ chargeitGuard: true }, "", location.href);
+  }, windowMs);
+}
+
 export function hasLayer(name: string): boolean {
   return layers.some((l) => l.name === name);
 }
@@ -42,8 +70,13 @@ export function isSettling(): boolean {
 /** Registers an open layer (no-op if it's already open). `url` defaults to the current one. */
 export function openLayer(name: string, close: () => void, url?: string): void {
   if (hasLayer(name)) return;
+  clearTimeout(rearm);
   layers.push({ name, close });
-  run(() => history.pushState({ chargeitLayer: name }, "", url ?? location.href));
+  run(() => {
+    // Opened right after a first Back on the base screen: put the exit guard back underneath.
+    if (history.state?.chargeitBase) history.pushState({ chargeitGuard: true }, "", location.href);
+    history.pushState({ chargeitLayer: name }, "", url ?? location.href);
+  });
 }
 
 /** The UI closed this layer itself: drop it (and anything opened on top of it) without leaving the app. */
@@ -76,5 +109,6 @@ window.addEventListener("popstate", () => {
     for (const fn of queue.splice(0)) fn();
     return;
   }
-  layers.pop()?.close();
+  if (layers.length) layers.pop()!.close();
+  else if (onExitAttempt && history.state?.chargeitBase) exitAttempt();
 });

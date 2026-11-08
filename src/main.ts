@@ -6,7 +6,7 @@ import "./styles.css";
 import { loadChargers, loadDemo, loadHistory, searchPlaces, type DataMode, type Place, type StationHistory } from "./api.ts";
 import { DAYS, busiestWindow, chartHtml, clock, connectorStory, dayProfile, sgtParts, tileFacts } from "./history-view.ts";
 import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT, BELL } from "./icons.ts";
-import { closeAbove, closeLayer, hasLayer, isSettling, openLayer, replaceUrl } from "./backstack.ts";
+import { closeAbove, closeLayer, hasLayer, installExitGuard, isSettling, openLayer, replaceUrl, topLayer } from "./backstack.ts";
 import { loadWatches, pushSupport, startWatch, stopWatch as stopAlertWatch, syncWatches, type AlertEvent, type LocalWatch } from "./alerts.ts";
 import { ChargeMap, SG_CENTER, type Theme } from "./map.ts";
 import {
@@ -153,7 +153,25 @@ const cmap = new ChargeMap($("#map"), currentTheme(), {
 
 sheet.onChange((snap) => {
   $(".fabs").classList.toggle("is-hidden", snap === "full");
+  syncSheetLayer();
 });
+
+/**
+ * A pulled-up sheet is a Back layer: Back collapses it to show the map.
+ * Dragging it down by hand removes that step again (when it's the top one).
+ */
+function syncSheetLayer(): void {
+  if (sheet.snap !== "peek") {
+    openLayer("sheet", () => {
+      if (sheet.snap !== "peek") sheet.to("peek");
+      else history.back(); // already collapsed by hand: let this press do the next thing
+    });
+  } else if (topLayer() === "sheet") closeLayer("sheet");
+}
+
+// Deep link (#s=…) as opened, before the exit guard rewrites the first entry's URL.
+let bootHash = location.hash;
+installExitGuard(location.pathname + location.search, () => toast("Press back again to exit"));
 
 // ── Splash ──────────────────────────────────────────────────────────────
 
@@ -211,6 +229,7 @@ function applyPayload(payload: ChargersPayload, mode: DataMode): void {
   }
   if (first) {
     const fromHash = readHash();
+    bootHash = "";
     if (fromHash && state.byId.has(fromHash)) openDetail(fromHash, { fly: true });
   }
 }
@@ -481,6 +500,9 @@ function openDetail(id: string, opts: { fly: boolean }): void {
   const wasOpen = !!state.selected;
   state.selected = id;
   cmap.select(id);
+  // Pull the sheet up first so its Back step sits below the station's.
+  if (sheet.snap === "peek") sheet.to("half");
+  syncSheetLayer();
   if (hasLayer("detail")) {
     // Switching station: close panels on the old one, then just change the URL.
     closeAbove("detail");
@@ -500,7 +522,6 @@ function openDetail(id: string, opts: { fly: boolean }): void {
     }
     detailView.scrollTop = 0;
   });
-  if (sheet.snap === "peek") sheet.to("half");
   const pad = sheet.heightFor("half") + 20;
   if (opts.fly || !cmap.map.getBounds().contains([st.lng, st.lat])) cmap.flyToStation(st, pad);
   else cmap.flyTo([st.lng, st.lat], Math.max(cmap.map.getZoom(), 15), pad);
@@ -988,7 +1009,7 @@ async function share(st: StationVM): Promise<void> {
 // ── Deep links ──────────────────────────────────────────────────────────
 
 function readHash(): string | null {
-  const m = location.hash.match(/s=([^&]+)/);
+  const m = (location.hash || bootHash).match(/s=([^&]+)/);
   if (!m) return null;
   try {
     return resolveId(decodeURIComponent(m[1]));

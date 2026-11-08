@@ -724,10 +724,43 @@ test.describe("system Back button", () => {
       await expect(page.locator("#view-detail")).toBeHidden();
     }
     await page.waitForTimeout(300);
-    // Each open adds one entry and each close removes it again (forward entries may remain).
-    expect(await page.evaluate(() => history.length)).toBeLessThanOrEqual(start + 1);
+    // Each station open/close nets zero; the pulled-up list keeps its own one step (forward entries may remain).
+    expect(await page.evaluate(() => history.length)).toBeLessThanOrEqual(start + 2);
     await page.goBack();
     await page.waitForTimeout(300);
     await expect(page.locator("#view-detail")).toBeHidden(); // Back doesn't resurrect a closed station
+  });
+});
+
+test.describe("Back on the base screen", () => {
+  test("a pulled-up list collapses to show the map", async ({ page, api: _ }) => {
+    await page.goto("/");
+    await ready(page);
+    await page.locator(".sheet__grip").click(); // peek -> half
+    await expect(page.locator("#sheet")).not.toHaveAttribute("data-snap", "peek");
+    await page.goBack();
+    await expect(page.locator("#sheet")).toHaveAttribute("data-snap", "peek");
+    await expect(page.locator(".card").first()).toBeAttached(); // still in the app
+  });
+
+  test("asks before leaving, and a second Back leaves", async ({ page, api: _ }) => {
+    await page.goto("/");
+    await ready(page);
+    await page.goBack();
+    await expect(page.locator("#toast")).toHaveText("Press back again to exit");
+    expect(new URL(page.url()).pathname).toBe("/"); // still here
+    await page.goBack(); // within the window: leaves
+    await expect.poll(() => page.url()).not.toContain("localhost:4173/");
+  });
+
+  test("if you don't press again, the next Back asks again", async ({ page, api: _ }) => {
+    await page.goto("/");
+    await ready(page);
+    await page.goBack();
+    await expect(page.locator("#toast")).toHaveText("Press back again to exit");
+    await page.waitForTimeout(2800);
+    await page.goBack();
+    await expect(page.locator("#toast")).toHaveText("Press back again to exit");
+    expect(page.url()).toContain("localhost:4173/");
   });
 });
