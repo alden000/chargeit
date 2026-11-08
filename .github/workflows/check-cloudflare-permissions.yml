@@ -20,15 +20,31 @@ jobs:
       - name: Check D1 access
         run: |
           set -u
+          cat > /tmp/ok.py <<'PY'
+          import json, sys
+          try:
+              d = json.load(sys.stdin)
+          except Exception:
+              print("FAIL (no JSON response)"); sys.exit()
+          if d.get("success"):
+              print("ok")
+          else:
+              print("FAIL " + "; ".join(f"{e.get('code')}: {e.get('message')}" for e in d.get("errors", [])))
+          PY
+          cat > /tmp/ids.py <<'PY'
+          import json, sys
+          d = json.load(sys.stdin)
+          for db in d.get("result") or []:
+              if db.get("name") == "chargeit-permission-test":
+                  print(db.get("uuid", ""))
+          PY
           api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/d1/database"
           auth=(-H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json")
-          ok() { python3 -c 'import sys,json; d=json.load(sys.stdin); print("ok" if d.get("success") else "FAIL " + "; ".join(f"{e.get(\"code\")}: {e.get(\"message\")}" for e in d.get("errors", [])))'; }
 
-          echo "D1 read (list databases): $(curl -s "${auth[@]}" "$api" | ok)"
-
-          created=$(curl -s "${auth[@]}" -X POST "$api" -d '{"name":"chargeit-permission-test"}')
-          echo "D1 edit (create test database): $(echo "$created" | ok)"
-          id=$(echo "$created" | python3 -c 'import sys,json; print((json.load(sys.stdin).get("result") or {}).get("uuid",""))')
-          if [ -n "$id" ]; then
-            echo "D1 edit (delete test database): $(curl -s "${auth[@]}" -X DELETE "$api/$id" | ok)"
-          fi
+          echo "D1 read (list databases): $(curl -s "${auth[@]}" "$api" | python3 /tmp/ok.py)"
+          echo "D1 edit (create test database): $(curl -s "${auth[@]}" -X POST "$api" -d '{"name":"chargeit-permission-test"}' | python3 /tmp/ok.py)"
+          # Delete the test database, plus any left over from an earlier run.
+          for id in $(curl -s "${auth[@]}" "$api" | python3 /tmp/ids.py 2>/dev/null); do
+            echo "D1 edit (delete test database): $(curl -s "${auth[@]}" -X DELETE "$api/$id" | python3 /tmp/ok.py)"
+          done
+          echo "Leftover test databases: $(curl -s "${auth[@]}" "$api" | python3 /tmp/ids.py 2>/dev/null | wc -l)"
