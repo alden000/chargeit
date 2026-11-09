@@ -253,3 +253,18 @@ describe("history clock", () => {
     expect(nextClockRun(t("10:06:30"))).toBe(t("10:11:00"));
   });
 });
+
+describe("owner key", () => {
+  it("is recognised only with the exact secret, and only if one is set", async () => {
+    const check = async (e: Env, key?: string) => {
+      const r = new Request("https://chargeit-proxy.example/v1/owner", { headers: { Origin: "https://chargeit.wwweeeiii.com", ...(key ? { "X-Owner-Key": key } : {}) } });
+      return ((await (await worker.fetch(r, e, ctx)).json()) as { owner: boolean }).owner;
+    };
+    const withKey = { ...env, OWNER_KEY: "correct horse battery staple" };
+    expect(await check(withKey, "correct horse battery staple")).toBe(true);
+    expect(await check(withKey, "correct horse battery stapl")).toBe(false);
+    expect(await check(withKey)).toBe(false);
+    expect(await check(env, "anything at all here")).toBe(false); // no secret configured
+    expect(await check({ ...env, OWNER_KEY: "short" }, "short")).toBe(false); // too short to trust
+  });
+});

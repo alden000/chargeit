@@ -2770,3 +2770,22 @@ button.cell {
     animation: none;
   }
 }
+
+.alert-panel__row.has-always {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.owner__form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-top: 8px;
+}
+.owner__form input {
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--ink-900);
+  color: var(--text);
+  font: inherit;
+}

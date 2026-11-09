@@ -7,7 +7,7 @@ import { loadChargers, loadDemo, loadHistory, searchPlaces, type DataMode, type 
 import { DAYS, busiestWindow, chartHtml, clock, connectorStory, dayProfile, sgtParts, tileFacts } from "./history-view.ts";
 import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT, BELL } from "./icons.ts";
 import { closeAbove, closeLayer, hasLayer, installExitGuard, isSettling, openLayer, replaceUrl, topLayer } from "./backstack.ts";
-import { loadWatches, pushSupport, startWatch, stopWatch as stopAlertWatch, syncWatches, type AlertEvent, type LocalWatch } from "./alerts.ts";
+import { forgetOwnerKey, isPerpetual, ownerKey, saveOwnerKey, loadWatches, pushSupport, startWatch, stopWatch as stopAlertWatch, syncWatches, type AlertEvent, type LocalWatch } from "./alerts.ts";
 import { ChargeMap, SG_CENTER, type Theme } from "./map.ts";
 import {
   DEFAULT_FILTERS,
@@ -643,6 +643,7 @@ function watchText(w: Pick<LocalWatch, "what" | "event">): string {
 }
 
 function minutesLeft(ms: number): string {
+  if (isPerpetual(Date.now() + ms)) return "Until you stop it";
   const m = Math.max(1, Math.round(ms / 60_000));
   return m < 60 ? `${m} min left` : `${Math.floor(m / 60)} h ${m % 60 ? `${m % 60} min ` : ""}left`;
 }
@@ -702,7 +703,7 @@ function alertsHtml(st: StationVM): string {
             ])
           : `<p class="alert-panel__hint">All ${total} chargers here. Tap a charger above to watch just that one.</p>`
       }
-      <div class="alert-panel__row" role="group" aria-label="For how long">${ALERT_MINUTES.map(
+      <div class="alert-panel__row${ownerKey() ? " has-always" : ""}" role="group" aria-label="For how long">${(ownerKey() ? [...ALERT_MINUTES, [0, "Always"] as [number, string]] : ALERT_MINUTES).map(
         ([m, label]) => `<button type="button" class="chip chip--small" data-act="alert-min" data-v="${m}" aria-pressed="${ui.minutes === m}">${label}</button>`,
       ).join("")}</div>
       <button type="button" class="alert-panel__once" data-act="alert-once" aria-pressed="${ui.once}"><i aria-hidden="true"></i>Stop after the first alert</button>
@@ -738,7 +739,7 @@ async function createAlert(st: StationVM): Promise<void> {
     state.alertUi = { ...ui, open: false, busy: false, error: "" };
     closeLayer("alert");
     refreshDetail(st.id);
-    toast(`Alert on: ${watchText(w).toLowerCase()} at ${st.name}, for ${ALERT_MINUTES.find(([m]) => m === ui.minutes)?.[1] ?? `${ui.minutes} min`}.`);
+    toast(`Alert on: ${watchText(w).toLowerCase()} at ${st.name}, ${ui.minutes === 0 ? "until you stop it" : `for ${ALERT_MINUTES.find(([m]) => m === ui.minutes)?.[1] ?? `${ui.minutes} min`}`}.`);
     haptic(12);
   } catch (err) {
     ui.busy = false;
@@ -935,7 +936,7 @@ detailView.addEventListener("click", (e) => {
       refreshDetail(st.id);
       break;
     case "alert-min":
-      state.alertUi.minutes = Number(btn.dataset.v) || 60;
+      state.alertUi.minutes = btn.dataset.v === "0" ? 0 : Number(btn.dataset.v) || 60;
       refreshDetail(st.id);
       break;
     case "alert-once":
@@ -1712,8 +1713,42 @@ watchListEl.addEventListener("click", (e) => {
   if (id) void removeAlert(id);
 });
 
+const ownerEl = $<HTMLElement>("#owner");
+function renderOwner(): void {
+  const has = !!ownerKey();
+  ownerEl.innerHTML = has
+    ? `<p class="settings__hint">Owner key saved on this device: alerts can run until you stop them (“Always”).</p>
+       <button type="button" class="btn btn--small" data-owner="forget">Forget owner key</button>`
+    : `<p class="settings__hint">If you run ChargeIt, enter your owner key to allow alerts without an end time.</p>
+       <form class="owner__form" data-owner="form"><input type="password" autocomplete="off" placeholder="Owner key" aria-label="Owner key" minlength="12" required />
+       <button type="submit" class="btn btn--small">Save</button></form>`;
+}
+ownerEl.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).closest('[data-owner="forget"]')) {
+    forgetOwnerKey();
+    if (state.alertUi.minutes === 0) state.alertUi.minutes = 60;
+    renderOwner();
+    toast("Owner key removed from this device.");
+  }
+});
+ownerEl.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = ownerEl.querySelector<HTMLInputElement>("input");
+  const key = input?.value.trim() ?? "";
+  if (key.length < 12) return;
+  void saveOwnerKey(key)
+    .then((ok) => {
+      if (ok) {
+        renderOwner();
+        toast("Owner key saved. “Always” is now an alert option.");
+      } else toast("That owner key isn't right.");
+    })
+    .catch(() => toast("Couldn't check the key. Try again when online."));
+});
+
 function openSettings(): void {
   closeMenus();
+  renderOwner();
   highlightToggle.checked = state.highlightMine;
   renderDiscounts();
   renderWatchList();

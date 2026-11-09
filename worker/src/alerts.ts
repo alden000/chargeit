@@ -15,6 +15,10 @@ export const MAX_PER_PHONE = 10;
 const MAX_TOTAL = 5000;
 export const MIN_MINUTES = 15;
 export const MAX_MINUTES = 12 * 60;
+/** minutes: 0 = "always" (until stopped), owner only. Stored as this far-future expiry (~year 2160). */
+export const PERPETUAL = 0;
+export const NEVER = 100_000_000;
+const MAX_PER_OWNER_PHONE = 30;
 /** Alerts per PushSender run: under the 50-subrequest limit with room to spare. */
 export const BATCH = 40;
 const SENDERS = 20;
@@ -36,7 +40,7 @@ export interface WatchInput {
 const str = (v: unknown, max: number) => (typeof v === "string" && v.length <= max ? v : null);
 
 /** Validates a watch request; returns an error message instead when it isn't acceptable. */
-export function parseWatch(body: unknown): WatchInput | string {
+export function parseWatch(body: unknown, opts: { owner?: boolean } = {}): WatchInput | string {
   if (!body || typeof body !== "object") return "body must be an object";
   const o = body as Record<string, unknown>;
   const sub = (o.subscription ?? {}) as Record<string, unknown>;
@@ -58,19 +62,22 @@ export function parseWatch(body: unknown): WatchInput | string {
   }
   if (o.event !== 0 && o.event !== 1 && o.event !== 2) return "invalid event";
   const minutes = typeof o.minutes === "number" && Number.isFinite(o.minutes) ? Math.round(o.minutes) : NaN;
-  if (!(minutes >= MIN_MINUTES && minutes <= MAX_MINUTES)) return "invalid duration";
+  if (minutes === PERPETUAL) {
+    if (!opts.owner) return "alerts without an end time are for the owner only";
+  } else if (!(minutes >= MIN_MINUTES && minutes <= MAX_MINUTES)) return "invalid duration";
   return { endpoint, p256dh, auth, station, name, connectors, labels, event: o.event, minutes, once: o.once !== false };
 }
 
-export async function addWatch(db: D1Database, w: WatchInput, nowMin: number): Promise<{ id: string; expires: number } | { error: string }> {
+export async function addWatch(db: D1Database, w: WatchInput, nowMin: number, opts: { owner?: boolean } = {}): Promise<{ id: string; expires: number } | { error: string }> {
+  const perPhoneMax = opts.owner ? MAX_PER_OWNER_PHONE : MAX_PER_PHONE;
   const [perPhone, total] = await db.batch<{ n: number }>([
     db.prepare("SELECT COUNT(*) AS n FROM watches WHERE endpoint = ? AND expires > ?").bind(w.endpoint, nowMin),
     db.prepare("SELECT COUNT(*) AS n FROM watches WHERE expires > ?").bind(nowMin),
   ]);
-  if ((perPhone.results[0]?.n ?? 0) >= MAX_PER_PHONE) return { error: `at most ${MAX_PER_PHONE} alerts at a time` };
+  if ((perPhone.results[0]?.n ?? 0) >= perPhoneMax) return { error: `at most ${perPhoneMax} alerts at a time` };
   if ((total.results[0]?.n ?? 0) >= MAX_TOTAL) return { error: "alerts are full right now, try later" };
   const id = b64url(crypto.getRandomValues(new Uint8Array(16)));
-  const expires = nowMin + w.minutes;
+  const expires = w.minutes === PERPETUAL ? NEVER : nowMin + w.minutes;
   await db
     .prepare("INSERT INTO watches (id, endpoint, p256dh, auth, station, name, connectors, labels, event, once, expires, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(id, w.endpoint, w.p256dh, w.auth, w.station, w.name, JSON.stringify(w.connectors), JSON.stringify(w.labels), w.event, w.once ? 1 : 0, expires, nowMin)

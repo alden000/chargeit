@@ -40,6 +40,8 @@ export interface Env {
   SENDER?: DurableObjectNamespace;
   /** VAPID key pair for Web Push (P-256 private JWK). Secret, set by setup-push-keys.yml. */
   VAPID_JWK?: string;
+  /** Owner's passphrase (secret, set in the Cloudflare dashboard). Unlocks alerts without an end time. */
+  OWNER_KEY?: string;
   /** Optional comma-separated override of the CORS allow-list. */
   ALLOWED_ORIGINS?: string;
 }
@@ -96,7 +98,7 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
   const origin = request.headers.get("Origin");
   const h: Record<string, string> = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, X-Owner-Key",
     "Access-Control-Max-Age": "86400",
     "Access-Control-Expose-Headers": "X-Feed-Updated, X-Fetched-At, X-Stale, X-SV",
     Vary: "Origin",
@@ -300,6 +302,13 @@ export default {
       return json(request, env, JSON.stringify({ error: "method_not_allowed" }), 405, { Allow: "GET, HEAD, OPTIONS" });
     }
 
+    if (path === "/v1/owner") {
+      // Lets the app confirm an owner key before saving it. Slowed down a little to blunt guessing.
+      const owner = await isOwner(request, env);
+      if (!owner) await new Promise((r) => setTimeout(r, 400));
+      return json(request, env, JSON.stringify({ owner }), 200, { "Cache-Control": "no-store" });
+    }
+
     if (path === "/v1/push/key") {
       const vapid = await getVapid(env).catch(() => null);
       if (!vapid) return json(request, env, JSON.stringify({ error: "push_unavailable" }), 503, { "Cache-Control": "no-store" });
@@ -320,9 +329,10 @@ export default {
           } catch {
             return json(request, env, JSON.stringify({ error: "invalid JSON" }), 400, noStore);
           }
-          const w = parseWatch(body);
+          const owner = await isOwner(request, env);
+          const w = parseWatch(body, { owner });
           if (typeof w === "string") return json(request, env, JSON.stringify({ error: w }), 400, noStore);
-          const out = await addWatch(env.HISTORY, w, nowMin);
+          const out = await addWatch(env.HISTORY, w, nowMin, { owner });
           if ("error" in out) return json(request, env, JSON.stringify(out), 429, noStore);
           return json(request, env, JSON.stringify({ id: out.id, expires: out.expires * 60_000 }), 201, noStore);
         }
@@ -394,7 +404,7 @@ export default {
     }
 
     if (path === "/") {
-      return json(request, env, JSON.stringify({ name: "chargeit-lta-proxy", endpoints: ["/v1/status", "/v1/stations", "/v1/chargers", "/v1/history", "/v1/watch", "/v1/push/key", "/health"] }));
+      return json(request, env, JSON.stringify({ name: "chargeit-lta-proxy", endpoints: ["/v1/status", "/v1/stations", "/v1/chargers", "/v1/history", "/v1/watch", "/v1/push/key", "/v1/owner", "/health"] }));
     }
 
     return json(request, env, JSON.stringify({ error: "not_found" }), 404);
@@ -425,6 +435,17 @@ async function afterRecord(env: Env, result: RecordResult): Promise<void> {
     return -1;
   });
   lastRecord = { ...summary, changed: changed.length, alerts, tried };
+}
+
+/** Constant-time check of the X-Owner-Key header against the OWNER_KEY secret. */
+async function isOwner(request: Request, env: Env): Promise<boolean> {
+  const given = request.headers.get("X-Owner-Key");
+  if (!env.OWNER_KEY || env.OWNER_KEY.length < 12 || !given) return false;
+  const digest = async (s: string) => new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
+  const [a, b] = await Promise.all([digest(given), digest(env.OWNER_KEY)]);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
 }
 
 const PUSH_SUBJECT = "https://chargeit.wwweeeiii.com";

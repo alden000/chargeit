@@ -610,11 +610,13 @@ test.describe("charger alerts", () => {
     await page.route("**/v1/push/key", (r) => r.fulfill({ contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*" }, body: JSON.stringify({ key: "B" + "A".repeat(86) }) }));
     await page.route("**/v1/watch*", async (r) => {
       const req = r.request();
-      const h = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS" };
+      const h = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, X-Owner-Key", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS" };
       if (req.method() === "OPTIONS") return r.fulfill({ status: 204, headers: h });
       if (req.method() === "POST") {
-        posts.push(JSON.parse(req.postData() ?? "{}"));
-        return r.fulfill({ status: 201, contentType: "application/json", headers: h, body: JSON.stringify({ id: `watch-id-000000000${++n}`, expires: Date.now() + 2 * 3600_000 }) });
+        const body = JSON.parse(req.postData() ?? "{}");
+        posts.push(body);
+        const expires = body.minutes === 0 ? 6_000_000_000_000 : Date.now() + 2 * 3600_000;
+        return r.fulfill({ status: 201, contentType: "application/json", headers: h, body: JSON.stringify({ id: `watch-id-000000000${++n}`, expires }) });
       }
       if (req.method() === "DELETE") {
         deletes.push(new URL(req.url()).searchParams.get("id") ?? "");
@@ -668,6 +670,40 @@ test.describe("charger alerts", () => {
     expect(posts[0].connectors).toHaveLength(1);
     expect(posts[0]).toMatchObject({ event: 1, minutes: 60, once: false });
     expect(Object.keys(posts[0].labels as object)).toEqual(posts[0].connectors);
+  });
+
+  test("owner key: saved in Settings, unlocks 'Always', sent with the alert", async ({ page, context, api: _ }, info) => {
+    test.skip(info.project.name === "iphone", "iPhone Safari needs the app installed");
+    await context.grantPermissions(["notifications"]);
+    const { posts } = await mockAlerts(page);
+    const headers: string[] = [];
+    await page.route("**/v1/owner", (r) => {
+      const k = r.request().headers()["x-owner-key"] ?? "";
+      return r.fulfill({ contentType: "application/json", headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "X-Owner-Key" }, body: JSON.stringify({ owner: k === "my-owner-key-123" }) });
+    });
+    page.on("request", (req) => req.url().includes("/v1/watch") && req.method() === "POST" && headers.push(req.headers()["x-owner-key"] ?? ""));
+    await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+    await page.getByRole("button", { name: "Charger alerts" }).click();
+    await expect(page.locator(".alert-panel").getByRole("button", { name: "Always" })).toHaveCount(0); // not without the key
+    await page.getByRole("button", { name: "Charger alerts" }).click();
+
+    await page.getByRole("button", { name: "Settings" }).click();
+    const owner = page.locator("#owner");
+    await owner.getByLabel("Owner key").fill("wrong-key-000000");
+    await owner.getByRole("button", { name: "Save" }).click();
+    await expect(page.locator("#toast")).toHaveText("That owner key isn't right.");
+    await owner.getByLabel("Owner key").fill("my-owner-key-123");
+    await owner.getByRole("button", { name: "Save" }).click();
+    await expect(owner).toContainText("Owner key saved on this device");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Charger alerts" }).click();
+    const panel = page.locator(".alert-panel");
+    await panel.getByRole("button", { name: "Always" }).click();
+    await panel.getByRole("button", { name: "Start alert" }).click();
+    await expect(page.locator("#toast")).toContainText("until you stop it");
+    expect(posts.at(-1)).toMatchObject({ minutes: 0 });
+    expect(headers.at(-1)).toBe("my-owner-key-123");
   });
 
   test("iPhone without Home Screen install explains how to get alerts", async ({ page, api: _ }, info) => {

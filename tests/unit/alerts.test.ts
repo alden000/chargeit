@@ -20,6 +20,12 @@ describe("alerts: watch requests", () => {
     expect(parseWatch(null)).toBe("body must be an object");
   });
 
+  it("alerts without an end time are owner-only", () => {
+    expect(parseWatch({ ...ok, minutes: 0 })).toBe("alerts without an end time are for the owner only");
+    expect(parseWatch({ ...ok, minutes: 0 }, { owner: true })).toMatchObject({ minutes: 0 });
+    expect(parseWatch({ ...ok, minutes: 5 }, { owner: true })).toBe("invalid duration");
+  });
+
   it("trims long names and labels", () => {
     const w = parseWatch({ ...ok, name: "x".repeat(150), labels: { "R1-001": "y".repeat(60) } });
     expect(typeof w === "object" && [w.name.length, w.labels["R1-001"].length]).toEqual([80, 24]);

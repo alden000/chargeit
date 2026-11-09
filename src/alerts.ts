@@ -19,6 +19,41 @@ export interface LocalWatch {
 }
 
 const KEY = "chargeit:watches";
+const OWNER = "chargeit:ownerKey";
+
+/** The owner's key, if saved on this device (unlocks alerts without an end time). */
+export function ownerKey(): string | null {
+  try {
+    return localStorage.getItem(OWNER);
+  } catch {
+    return null;
+  }
+}
+
+/** Checks a key with the proxy and saves it only if it's right. */
+export async function saveOwnerKey(key: string): Promise<boolean> {
+  const res = await fetch(`${API_BASE}/v1/owner`, { headers: { "X-Owner-Key": key }, cache: "no-store" });
+  const ok = res.ok && ((await res.json()) as { owner?: boolean }).owner === true;
+  if (ok) {
+    try {
+      localStorage.setItem(OWNER, key);
+    } catch {
+      /* can't remember it on this device */
+    }
+  }
+  return ok;
+}
+
+export function forgetOwnerKey(): void {
+  try {
+    localStorage.removeItem(OWNER);
+  } catch {
+    /* nothing saved */
+  }
+}
+
+/** An expiry this far out means "until stopped". */
+export const isPerpetual = (expires: number, now = Date.now()) => expires - now > 5 * 365 * 86_400_000;
 
 export function loadWatches(now = Date.now()): LocalWatch[] {
   try {
@@ -98,9 +133,10 @@ export async function startWatch(w: NewWatch): Promise<LocalWatch> {
     if (p !== "granted") throw new Error("Notifications are off for ChargeIt. Allow them in your browser settings to get alerts.");
   }
   const sub = await subscription();
+  const key = ownerKey();
   const res = await fetch(`${API_BASE}/v1/watch`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(key ? { "X-Owner-Key": key } : {}) },
     body: JSON.stringify({ subscription: sub.toJSON(), station: w.station, name: w.name, connectors: w.connectors, labels: w.labels, event: w.event, minutes: w.minutes, once: w.once }),
   });
   const body = (await res.json().catch(() => ({}))) as { id?: string; expires?: number; error?: string };
