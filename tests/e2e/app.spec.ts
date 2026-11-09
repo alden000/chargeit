@@ -569,7 +569,7 @@ test("charger history: durations on tiles, a tapped charger's sessions, and busy
 
   await tile.click();
   await expect(tile).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator(".story")).toContainText(/(In use|Free) since \d\d:\d\d \(\d+ min\)\. Previous session \d\d:\d\d–\d\d:\d\d \(1 h 30 min\)\./);
+  await expect(page.locator(".story")).toContainText(/(In use|Free) since (\w{3} )?\d\d:\d\d \(\d+ min\)\. Previous session (\w{3} )?\d\d:\d\d–(\w{3} )?\d\d:\d\d \(1 h 30 min\)\./);
   await expect(page.locator(".bh__who")).toContainText("Lot");
 
   await page.locator('.bh__day[data-day="0"]').click();
@@ -691,10 +691,14 @@ test.describe("charger alerts", () => {
     const owner = page.locator("#owner");
     await owner.getByLabel("Owner key").fill("wrong-key-000000");
     await owner.getByRole("button", { name: "Save" }).click();
-    await expect(page.locator("#toast")).toHaveText("That owner key isn't right.");
+    await expect(owner.locator(".owner__msg")).toContainText("That owner key isn't right");
+    await owner.getByLabel("Owner key").fill("short");
+    await owner.getByRole("button", { name: "Save" }).click();
+    await expect(owner.locator(".owner__msg")).toHaveText("The owner key is at least 12 characters.");
     await owner.getByLabel("Owner key").fill("my-owner-key-123");
     await owner.getByRole("button", { name: "Save" }).click();
     await expect(owner).toContainText("Owner key saved on this device");
+    await expect(owner.locator(".owner__msg")).toContainText("Owner key accepted");
     await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "Charger alerts" }).click();

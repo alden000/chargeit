@@ -1720,30 +1720,48 @@ function renderOwner(): void {
     ? `<p class="settings__hint">Owner key saved on this device: alerts can run until you stop them (“Always”).</p>
        <button type="button" class="btn btn--small" data-owner="forget">Forget owner key</button>`
     : `<p class="settings__hint">If you run ChargeIt, enter your owner key to allow alerts without an end time.</p>
-       <form class="owner__form" data-owner="form"><input type="password" autocomplete="off" placeholder="Owner key" aria-label="Owner key" minlength="12" required />
-       <button type="submit" class="btn btn--small">Save</button></form>`;
+       <form class="owner__form" data-owner="form" novalidate><input type="password" autocomplete="off" placeholder="Owner key" aria-label="Owner key" />
+       <button type="submit" class="btn btn--small">Save</button></form>
+       <p class="owner__msg" role="status" aria-live="polite"></p>`;
+}
+/** Feedback right under the field: toasts sit behind the open Settings dialog. */
+function ownerMsg(text: string, kind: "" | "ok" | "error" = ""): void {
+  const el = ownerEl.querySelector<HTMLElement>(".owner__msg");
+  if (!el) return;
+  el.textContent = text;
+  el.dataset.kind = kind;
 }
 ownerEl.addEventListener("click", (e) => {
   if ((e.target as HTMLElement).closest('[data-owner="forget"]')) {
     forgetOwnerKey();
     if (state.alertUi.minutes === 0) state.alertUi.minutes = 60;
     renderOwner();
-    toast("Owner key removed from this device.");
+    ownerMsg("Owner key removed from this device.");
   }
 });
 ownerEl.addEventListener("submit", (e) => {
   e.preventDefault();
   const input = ownerEl.querySelector<HTMLInputElement>("input");
   const key = input?.value.trim() ?? "";
-  if (key.length < 12) return;
+  if (key.length < 12) {
+    ownerMsg("The owner key is at least 12 characters.", "error");
+    return;
+  }
+  const btn = ownerEl.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (btn) btn.disabled = true;
+  ownerMsg("Checking…");
   void saveOwnerKey(key)
     .then((ok) => {
       if (ok) {
         renderOwner();
-        toast("Owner key saved. “Always” is now an alert option.");
-      } else toast("That owner key isn't right.");
+        ownerEl.insertAdjacentHTML("beforeend", `<p class="owner__msg" role="status" data-kind="ok">✓ Owner key accepted. “Always” is now an alert option.</p>`);
+        haptic(12);
+      } else ownerMsg("That owner key isn't right. It must match the OWNER_KEY secret exactly.", "error");
     })
-    .catch(() => toast("Couldn't check the key. Try again when online."));
+    .catch(() => ownerMsg("Couldn't check the key. Try again when you're online.", "error"))
+    .finally(() => {
+      if (btn) btn.disabled = false;
+    });
 });
 
 function openSettings(): void {
