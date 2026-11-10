@@ -570,7 +570,7 @@ test("charger history: durations on tiles, a tapped charger's sessions, and busy
   await tile.click();
   await expect(tile).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".story")).toContainText(/(In use|Free) since (\w{3} )?\d\d:\d\d \(\d+ min\)\. Previous session (\w{3} )?\d\d:\d\d–(\w{3} )?\d\d:\d\d \(1 h 30 min\)\./);
-  await expect(page.locator(".bh__who")).toContainText("Lot");
+  await expect(page.locator(".bh__who")).toContainText("Show all");
 
   await page.locator('.bh__day[data-day="0"]').click();
   await expect(page.locator('.bh__day[data-day="0"]')).toHaveAttribute("aria-pressed", "true");
@@ -663,10 +663,10 @@ test.describe("charger alerts", () => {
     await page.locator("#view-detail button.cell").first().click();
     await page.getByRole("button", { name: "Charger alerts" }).click();
     const panel = page.locator(".alert-panel");
-    await expect(panel.getByRole("radio", { name: /^Lot / })).toHaveAttribute("aria-checked", "true");
+    await expect(panel.getByRole("radio", { name: /^L\d/ })).toHaveAttribute("aria-checked", "true");
     await panel.getByRole("button", { name: "Stop after the first alert" }).click(); // keep alerting
     await panel.getByRole("button", { name: "Start alert" }).click();
-    await expect(page.locator(".watching")).toContainText(/Lot .+ frees up/);
+    await expect(page.locator(".watching")).toContainText(/L\d.* frees up/);
     expect(posts[0].connectors).toHaveLength(1);
     expect(posts[0]).toMatchObject({ event: 1, minutes: 60, once: false });
     expect(Object.keys(posts[0].labels as object)).toEqual(posts[0].connectors);

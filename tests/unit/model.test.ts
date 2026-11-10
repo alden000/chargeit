@@ -153,3 +153,18 @@ describe("filters & search", () => {
     expect(g[1].connectors).toHaveLength(2);
   });
 });
+
+import { connectorLabels } from "../../src/model.ts";
+
+describe("connector labels", () => {
+  const pt = (position: string, ids: string[]) => ({ operator: "X", position, hours: "", plugs: [{ type: "Type 2", current: "AC" as const, kw: 7, price: null, priceType: "", connectors: ids.map((id) => ({ id, s: 1 as const })) }] });
+  it("numbers chargers that share a position, drops a trailing dash, keeps unique lots as they are", () => {
+    const m = connectorLabels({
+      points: [pt("L2 -", ["R104724K-002", "R104723E-001"]), pt("L2 -", ["R104723E-002", "R104724K-001"]), pt("L3B 92", ["R119258K-001"]), pt("L4 51 & 52", ["A-002", "A-001"]), pt("", ["Z9-001"])],
+    });
+    expect([m.get("R104723E-001"), m.get("R104723E-002"), m.get("R104724K-001"), m.get("R104724K-002")]).toEqual(["L2 #1", "L2 #2", "L2 #3", "L2 #4"]);
+    expect(m.get("R119258K-001")).toBe("L3B 92");
+    expect([m.get("A-001"), m.get("A-002")]).toEqual(["L4 51 & 52 #1", "L4 51 & 52 #2"]);
+    expect(m.get("Z9-001")).toBe("Charger Z9-001");
+  });
+});

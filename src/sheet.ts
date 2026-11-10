@@ -67,6 +67,12 @@ export class BottomSheet {
     this.listeners.add(fn);
   }
 
+  private snapListeners = new Set<(snap: Snap) => void>();
+  /** Called as soon as the target snap changes (not per animation frame). */
+  onSnap(fn: (snap: Snap) => void): void {
+    this.snapListeners.add(fn);
+  }
+
   heightFor(snap: Snap): number {
     const H = this.el.parentElement?.clientHeight ?? window.innerHeight;
     if (snap === "peek") return Math.min(PEEK_PX, H * 0.4);
@@ -85,6 +91,7 @@ export class BottomSheet {
     const changed = snap !== this.snap;
     this.snap = snap;
     this.el.dataset.snap = snap;
+    if (changed) for (const fn of this.snapListeners) fn(snap);
     this.target = this.heightFor(snap);
     if (changed) haptic(6);
     if (!animate || reducedMotion() || this.isDesktop()) {

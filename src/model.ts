@@ -479,3 +479,25 @@ export function bestKwhPrice(st: Station, discounts: Discounts, accept?: (pt: Po
   }
   return best;
 }
+
+/**
+ * A name for every connector at a station that tells them apart. LTA's
+ * position text is often shared ("L4 51 & 52" for both sockets of a post) or
+ * has no lot at all ("L2 -" for four chargers). Shared names get a stable
+ * number in connector-id order ("L2 #1"…"L2 #4"); a trailing dash is dropped;
+ * with no position at all it's "Charger" plus the number or the id's tail.
+ */
+export function connectorLabels(st: Pick<Station, "points">): Map<string, string> {
+  const all = st.points.flatMap((pt) => pt.plugs.flatMap((pl) => pl.connectors.map((c) => ({ id: c.id, base: pt.position.trim().replace(/\s*[-–—]+$/, "").trim() }))));
+  const groups = new Map<string, string[]>();
+  for (const c of all) groups.set(c.base, [...(groups.get(c.base) ?? []), c.id]);
+  const out = new Map<string, string>();
+  for (const [base, ids] of groups) {
+    const sorted = [...new Set(ids)].sort();
+    sorted.forEach((id, i) => {
+      if (sorted.length === 1) out.set(id, base || `Charger ${id.slice(-6)}`);
+      else out.set(id, `${base || "Charger"} #${i + 1}`);
+    });
+  }
+  return out;
+}

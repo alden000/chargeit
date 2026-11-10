@@ -17,6 +17,7 @@ import {
   formatDistance,
   formatKw,
   groupPlugs,
+  connectorLabels,
   matchesFilters,
   operatorInfo,
   searchStations,
@@ -153,8 +154,8 @@ const cmap = new ChargeMap($("#map"), currentTheme(), {
 
 sheet.onChange((snap) => {
   $(".fabs").classList.toggle("is-hidden", snap === "full");
-  syncSheetLayer();
 });
+sheet.onSnap(() => syncSheetLayer());
 
 /**
  * A pulled-up sheet is a Back layer: Back collapses it to show the map.
@@ -605,6 +606,14 @@ function detailSig(st: StationVM): string {
   return JSON.stringify(st.points) + (state.favs.has(st.id) ? "*" : "") + JSON.stringify(state.discounts) + hist + alerts;
 }
 
+const labelCache = new WeakMap<StationVM, Map<string, string>>();
+/** The station's distinct name for a connector (see connectorLabels). */
+function labelOf(st: StationVM, id: string): string {
+  let m = labelCache.get(st);
+  if (!m) labelCache.set(st, (m = connectorLabels(st)));
+  return m.get(id) ?? `Charger ${id.slice(-6)}`;
+}
+
 function connectorIdsOf(st: StationVM): string[] {
   return st.points.flatMap((pt) => pt.plugs.flatMap((pl) => pl.connectors.map((c) => c.id))).filter(Boolean);
 }
@@ -628,7 +637,7 @@ function historyStoryHtml(st: StationVM, cid: string, hist: StationHistory): str
   const live = groupPlugs(st).flatMap((g) => g.connectors).find((c) => c.id === cid);
   if (!live) return "";
   const lines = connectorStory(live.s, hist.connectors[cid], Date.now());
-  const where = live.position ? `Lot ${live.position}` : `Charger ${cid.slice(-6)}`;
+  const where = labelOf(st, cid);
   return `<p class="story" aria-live="polite"><b>${escapeHtml(where)}</b> ${lines.length ? escapeHtml(lines.join(" ")) : "No history for this charger yet."}</p>`;
 }
 
@@ -671,7 +680,7 @@ function alertsHtml(st: StationVM): string {
   if (!ui.open) return list;
   const support = state.mode === "demo" ? ({ ok: false, reason: "unsupported" } as const) : pushSupport();
   const picked = state.histPick.cid ? groupPlugs(st).flatMap((g) => g.connectors).find((c) => c.id === state.histPick.cid) : null;
-  const pickedName = picked ? (picked.position ? `Lot ${picked.position}` : `Charger ${picked.id.slice(-6)}`) : "";
+  const pickedName = picked ? labelOf(st, picked.id) : "";
   const one = ui.one && !!picked;
   const total = connectorIdsOf(st).length;
   const seg = (act: string, items: Array<[string, string, boolean]>) =>
@@ -720,7 +729,7 @@ async function createAlert(st: StationVM): Promise<void> {
   const picked = ui.one && state.histPick.cid ? conns.find((c) => c.id === state.histPick.cid) : null;
   const chosen = picked ? [picked] : conns;
   const labels: Record<string, string> = {};
-  for (const c of chosen) if (c.position) labels[c.id] = c.position;
+  for (const c of chosen) labels[c.id] = labelOf(st, c.id);
   ui.busy = true;
   ui.error = "";
   refreshDetail(st.id);
@@ -730,7 +739,7 @@ async function createAlert(st: StationVM): Promise<void> {
       name: st.name,
       connectors: chosen.map((c) => c.id),
       labels,
-      what: picked ? (picked.position ? `lot ${picked.position}` : `charger ${picked.id.slice(-6)}`) : "any charger",
+      what: picked ? labelOf(st, picked.id) : "any charger",
       event: ui.event,
       minutes: ui.minutes,
       once: ui.once,
@@ -766,7 +775,7 @@ function busyHoursHtml(st: StationVM, hist: StationHistory): string {
   const sum = known === 0 ? "No data for this day yet" : known >= 20 ? (busiestWindow(profile) ?? "Still learning") : `Still learning · ${known} of 24 hours`;
   const live = pick.cid ? groupPlugs(st).flatMap((g) => g.connectors).find((c) => c.id === pick.cid) : null;
   const who = live
-    ? `${escapeHtml(live.position ? `Lot ${live.position}` : `Charger ${pick.cid!.slice(-6)}`)} · <button type="button" class="linkish" data-act="cell" data-cid="${escapeHtml(pick.cid!)}">Show all</button>`
+    ? `${escapeHtml(labelOf(st, pick.cid!))} · <button type="button" class="linkish" data-act="cell" data-cid="${escapeHtml(pick.cid!)}">Show all</button>`
     : "All chargers · tap one to see it alone";
   const since = hist.from ? new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Singapore", day: "numeric", month: "short" }).format(hist.from) : "";
   return `<h3 class="section-h">Busy hours</h3>
@@ -866,9 +875,9 @@ function renderDetail(id: string, animate: boolean): void {
                 const tag = hist ? "button" : "div";
                 const act = hist ? ` type="button" data-act="cell" data-cid="${escapeHtml(c.id)}" aria-pressed="${picked}"` : "";
                 const spoken = facts?.dur ? `${facts.atLeast ? " for at least " : " for "}${facts.dur}${facts.since ? `, ${facts.since}` : ""}` : "";
-                const aria = `${lbl}${spoken}${c.position ? `, lot ${c.position}` : ""}`;
+                const aria = `${lbl}${spoken}, ${labelOf(st, c.id)}`;
                 return `<${tag}${act} class="cell cell--${cls}${picked ? " is-picked" : ""}" style="--delay:${animate ? 200 + (gi * 4 + ci) * 40 : 0}ms" title="${escapeHtml(c.id)}" aria-label="${escapeHtml(aria)}">
-                  <b>${lbl}</b>${hist ? `<strong class="cell__dur">${dur ? escapeHtml(dur) : ""}</strong><small class="cell__since">${escapeHtml(facts?.since ?? "")}</small>` : ""}<span>${escapeHtml(c.position || c.id.slice(-6) || "—")}</span></${tag}>`;
+                  <b>${lbl}</b>${hist ? `<strong class="cell__dur">${dur ? escapeHtml(dur) : ""}</strong><small class="cell__since">${escapeHtml(facts?.since ?? "")}</small>` : ""}<span>${escapeHtml(labelOf(st, c.id))}</span></${tag}>`;
               })
               .join("")}
           </div>
