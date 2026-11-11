@@ -5,7 +5,7 @@ import "./styles.css";
 
 import { loadChargers, loadDemo, loadHistory, searchPlaces, type DataMode, type Place, type StationHistory } from "./api.ts";
 import { DAYS, busiestWindow, chartHtml, clock, connectorStory, dayProfile, sgtParts, tileFacts } from "./history-view.ts";
-import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, STAR, BOLT, BELL } from "./icons.ts";
+import { CARET, CHEVRON_LEFT, CLOSE, NAV, PIN, PLUG_AC, PLUG_DC, SEARCH_EMPTY, SHARE, HEART, BOLT, BELL } from "./icons.ts";
 import { closeAbove, closeLayer, hasLayer, installExitGuard, isSettling, openLayer, replaceUrl, topLayer } from "./backstack.ts";
 import { forgetOwnerKey, isPerpetual, ownerKey, saveOwnerKey, loadWatches, pushSupport, startWatch, stopWatch as stopAlertWatch, syncWatches, type AlertEvent, type LocalWatch } from "./alerts.ts";
 import { ChargeMap, SG_CENTER, type Theme } from "./map.ts";
@@ -435,7 +435,7 @@ function renderList(force = false): void {
   if (!sorted.length) {
     listEl.innerHTML = `<li class="empty">${SEARCH_EMPTY}
       <div><strong>${state.filters.favourites ? "No favourites yet." : "No chargers match here."}</strong></div>
-      <div>${state.filters.favourites ? "Tap ☆ on a charger to save it." : "Try zooming out or clearing a filter."}</div>
+      <div>${state.filters.favourites ? "Tap ♡ on a station to save it." : "Try zooming out or clearing a filter."}</div>
       ${activeFilterCount() ? `<button type="button" class="btn" data-act="clear">Clear filters</button>` : ""}</li>`;
     const b = listEl.querySelector<HTMLButtonElement>('[data-act="clear"]');
     if (b) b.onclick = () => setFilters({ ...DEFAULT_FILTERS });
@@ -460,7 +460,7 @@ function renderList(force = false): void {
           aria-label="${escapeHtml(`${s.name}, ${availabilityA11y(s.sum)}, up to ${formatKw(s.sum.maxKw)}, ${formatDistance(d)} away`)}">
         ${pinHtml(s.sum)}
         <span class="card__body">
-          <p class="card__name" style="view-transition-name:${state.selected ? "none" : `n-${cssId(s.id)}`}">${state.favs.has(s.id) ? "★ " : ""}${escapeHtml(s.name)}</p>
+          <p class="card__name" style="view-transition-name:${state.selected ? "none" : `n-${cssId(s.id)}`}">${state.favs.has(s.id) ? '<span class="card__fav" aria-label="Saved">♥</span> ' : ""}${escapeHtml(s.name)}</p>
           <span class="card__meta">
             <span class="avail avail--${s.sum.state}">${availabilityText(s.sum)}</span>
             <span>${formatKw(s.sum.maxKw)}${s.sum.hasDC ? " DC" : ""}</span>
@@ -832,7 +832,7 @@ function renderDetail(id: string, animate: boolean): void {
         <p>${escapeHtml(st.address || st.postal)}${d ? ` · ${d} away` : ""}</p>
       </div>
       <div class="detail__actions-top">
-        <button type="button" class="icon-btn fav" data-act="fav" aria-pressed="${fav}" aria-label="${fav ? "Remove from" : "Add to"} favourites">${STAR}</button>
+        <button type="button" class="icon-btn fav" data-act="fav" aria-pressed="${fav}" aria-label="${fav ? "Remove from" : "Add to"} favourites">${HEART}</button>
         <button type="button" class="icon-btn" data-act="close" aria-label="Close">${CLOSE}</button>
       </div>
     </div>
@@ -1058,6 +1058,12 @@ function setFilters(f: Filters): void {
   refilter();
 }
 
+const savedFab = $<HTMLButtonElement>("#saved-fab");
+savedFab.addEventListener("click", () => {
+  haptic(8);
+  setFilters({ ...state.filters, favourites: !state.filters.favourites });
+});
+
 function renderFilters(): void {
   const f = state.filters;
   const speedLabel = f.minKw ? `≥ ${f.minKw} kW` : "Any speed";
@@ -1069,8 +1075,9 @@ function renderFilters(): void {
     `<button type="button" class="chip" data-f="price" aria-pressed="${f.maxPrice !== null}" aria-haspopup="dialog"><span>${f.maxPrice === null ? "Any price" : f.maxPrice === 0 ? "Free only" : `≤ ${money(f.maxPrice)}`}</span>${CARET}</button>`,
     `<button type="button" class="chip chip--sort" data-f="sort" aria-pressed="${state.sort === "cheap"}" aria-label="Sort list: ${state.sort === "cheap" ? "cheapest first" : "nearest first"}">${SORT_ICON}<span>${state.sort === "cheap" ? "Cheapest" : "Nearest"}</span></button>`,
     `<button type="button" class="chip" data-f="ops" aria-pressed="${f.operators.length > 0}" aria-haspopup="true"><span>${escapeHtml(opLabel)}</span>${CARET}</button>`,
-    `<button type="button" class="chip" data-f="favourites" aria-pressed="${f.favourites}">${STAR.replace("<svg", '<svg style="fill:currentColor"')}<span>Saved</span></button>`,
   ];
+  savedFab.setAttribute("aria-pressed", String(f.favourites));
+  savedFab.setAttribute("aria-label", f.favourites ? "Show all stations" : "Show saved stations only");
   if (activeFilterCount() > 1) chips.push(`<button type="button" class="chip" data-f="clear" aria-pressed="false"><span>Clear</span></button>`);
   const html = chips.join("");
   if (filtersEl.dataset.html !== html) {
@@ -1772,6 +1779,26 @@ ownerEl.addEventListener("submit", (e) => {
     .catch(() => ownerMsg("Couldn't check the key. Try again when you're online.", "error"))
     .finally(() => {
       if (btn) btn.disabled = false;
+    });
+});
+
+$("#share-app").addEventListener("click", () => {
+  const url = new URL(import.meta.env.BASE_URL, location.origin).href;
+  const msg = $("#share-msg");
+  const data = { title: "ChargeIt", text: "Live EV charger availability across Singapore: free chargers, speed and price.", url };
+  if (navigator.share) {
+    navigator.share(data).catch(() => undefined); // closing the share sheet isn't an error
+    return;
+  }
+  navigator.clipboard
+    ?.writeText(url)
+    .then(() => {
+      msg.textContent = `Link copied: ${url}`;
+      msg.dataset.kind = "ok";
+    })
+    .catch(() => {
+      msg.textContent = url;
+      msg.dataset.kind = "";
     });
 });
 

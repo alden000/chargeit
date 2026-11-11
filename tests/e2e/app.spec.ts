@@ -96,7 +96,8 @@ test.describe("ChargeIt core journeys", () => {
     await fav.click();
     await expect(fav).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "Close", exact: true }).click();
-    await page.locator('[data-f="favourites"]').click();
+    await page.getByRole("button", { name: "Show saved stations only" }).click();
+    await expect(page.getByRole("button", { name: "Show all stations" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator(".card")).toHaveCount(1);
     await expect(page.locator(".card .card__name")).toContainText("Clarke Quay");
     await page.reload();
@@ -830,4 +831,18 @@ test.describe("Back on the base screen", () => {
     await expect(page.locator("#toast")).toHaveText("Press back again to exit");
     expect(page.url()).toContain("localhost:4173/");
   });
+});
+
+test("Settings has a Share ChargeIt button that shares the app's link", async ({ page, api: _ }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __shared: unknown[] }).__shared = [];
+    Object.defineProperty(navigator, "share", { value: async (d: unknown) => void (window as unknown as { __shared: unknown[] }).__shared.push(d), configurable: true });
+  });
+  await page.goto("/");
+  await ready(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.locator("#share-app").click();
+  const shared = await page.evaluate(() => (window as unknown as { __shared: Array<{ url: string; title: string }> }).__shared);
+  expect(shared).toHaveLength(1);
+  expect(shared[0]).toMatchObject({ title: "ChargeIt", url: "http://localhost:4173/" });
 });

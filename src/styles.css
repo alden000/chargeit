@@ -723,6 +723,8 @@ svg {
 
 /* ───────────────────────── FAB ───────────────────────── */
 .fabs {
+  display: grid;
+  gap: 10px;
   position: absolute;
   right: 14px;
   z-index: 9;
@@ -2801,5 +2803,20 @@ button.cell {
   font-weight: 600;
 }
 .owner__msg[data-kind="error"] {
+  color: var(--ember);
+}
+
+.fab--saved[aria-pressed="true"] {
+  color: #fff;
+  background: var(--ember);
+  border-color: var(--ember);
+}
+.fab--saved[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+.fav[aria-pressed="true"] {
+  color: var(--ember);
+}
+.card__fav {
   color: var(--ember);
 }
