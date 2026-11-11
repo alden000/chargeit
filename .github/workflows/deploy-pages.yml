@@ -34,7 +34,15 @@ jobs:
       - run: npm run typecheck
         working-directory: worker
       - run: npm test
-      - run: npx playwright install --with-deps chromium
+      # System packages come from Ubuntu's mirrors, which are sometimes unreachable
+      # from runners; the browser itself doesn't need them all (they're mostly fonts),
+      # so fall back to installing just the browser rather than failing the deploy.
+      - name: Install test browser
+        run: |
+          timeout 300 npx playwright install --with-deps chromium || {
+            echo "::warning::System packages unavailable; installing the browser without them"
+            npx playwright install chromium
+          }
       - run: npm run test:e2e
         env:
           CI: "true"
