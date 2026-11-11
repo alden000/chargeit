@@ -132,6 +132,33 @@ test.describe("ChargeIt core journeys", () => {
     await page.reload();
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe(other.toLowerCase());
   });
+
+  test("the map follows the theme both ways", async ({ page, api: _ }) => {
+    await page.goto("/");
+    await ready(page);
+    // Brightness (0-1) of the map's background (tiles are blocked in tests, so it's the plain fallback style).
+    const mapLum = () =>
+      page.evaluate(() => {
+        const m = (window as unknown as { __chargeit: { cmap: { map: { getStyle(): { layers?: Array<{ type: string; paint?: Record<string, unknown> }> } | undefined } } } }).__chargeit.cmap.map;
+        const c = String(m.getStyle()?.layers?.find((l) => l.type === "background")?.paint?.["background-color"] ?? "");
+        const el = document.createElement("i");
+        el.style.color = c;
+        document.body.append(el);
+        const [r, g, b] = getComputedStyle(el).color.match(/\d+(\.\d+)?/g)!.map(Number);
+        el.remove();
+        return c ? (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 : -1;
+      });
+    await page.getByRole("button", { name: "Settings" }).click();
+    for (const [choice, light] of [["Dark", false], ["Light", true], ["Dark", false], ["Light", true]] as const) {
+      await page.getByRole("radio", { name: choice }).click();
+      await expect
+        .poll(async () => {
+          const l = await mapLum();
+          return light ? l > 0.5 : l >= 0 && l < 0.5;
+        }, { message: `map should be ${choice.toLowerCase()}` })
+        .toBe(true);
+    }
+  });
 });
 
 test.describe("resilience", () => {

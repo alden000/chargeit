@@ -1585,7 +1585,9 @@ function setTheme(choice: ThemeChoice): void {
     }
   };
   void withViewTransition(apply);
-  void cmap.applyTheme(currentTheme());
+  // The page's theme attribute only changes once the view transition runs, so
+  // tell the map the chosen theme directly rather than reading it back.
+  void cmap.applyTheme(choice === "auto" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : choice);
   haptic(6);
   renderThemeChoice(choice); // the DOM update above may still be pending inside a view transition
 }
