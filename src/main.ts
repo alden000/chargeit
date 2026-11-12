@@ -105,7 +105,8 @@ const state = {
   history: new Map<string, { at: number; data: StationHistory | null }>(),
   /** Charger alerts set on this device, and the station screen's alert form. */
   watches: loadWatches(),
-  alertUi: { open: false, event: 1 as AlertEvent, one: false, minutes: 60, once: true, busy: false, error: "" },
+  /** scope: "all", a charger type ("t:<kW>|<AC/DC>"), or "one" (the tapped charger). */
+  alertUi: { open: false, event: 1 as AlertEvent, scope: "all", minutes: 60, once: true, busy: false, error: "" },
   /** Busy-hours chart: which station, which connector (null = all) and which weekday. */
   histPick: { station: "", cid: null as string | null, day: sgtParts(Date.now()).day },
   loading: false,
@@ -679,12 +680,10 @@ function alertsHtml(st: StationVM): string {
   const ui = state.alertUi;
   if (!ui.open) return list;
   const support = state.mode === "demo" ? ({ ok: false, reason: "unsupported" } as const) : pushSupport();
-  const picked = state.histPick.cid ? groupPlugs(st).flatMap((g) => g.connectors).find((c) => c.id === state.histPick.cid) : null;
-  const pickedName = picked ? labelOf(st, picked.id) : "";
-  const one = ui.one && !!picked;
-  const total = connectorIdsOf(st).length;
+  const scopes = alertScopes(st);
+  const scope = scopes.find((s) => s.v === ui.scope) ?? scopes[0];
   const seg = (act: string, items: Array<[string, string, boolean]>) =>
-    `<div class="segmented segmented--small" role="radiogroup">${items
+    `<div class="segmented segmented--small${items.length > 3 ? " segmented--wrap" : ""}" role="radiogroup">${items
       .map(([v, label, on]) => `<button type="button" role="radio" aria-checked="${on}" data-act="${act}" data-v="${v}">${escapeHtml(label)}</button>`)
       .join("")}</div>`;
   const blocked =
@@ -704,13 +703,11 @@ function alertsHtml(st: StationVM): string {
         ["0", "Is taken", ui.event === 0],
         ["2", "Either", ui.event === 2],
       ])}
+      ${scopes.length > 1 ? seg("alert-scope", scopes.map((s) => [s.v, s.label, s === scope])) : ""}
       ${
-        picked
-          ? seg("alert-scope", [
-              ["all", `All ${total} here`, !one],
-              ["one", pickedName, one],
-            ])
-          : `<p class="alert-panel__hint">All ${total} chargers here. Tap a charger above to watch just that one.</p>`
+        state.histPick.cid
+          ? ""
+          : `<p class="alert-panel__hint">${scopes.length > 1 ? "Or tap" : `All ${scopes[0].ids.length} chargers here. Tap`} a charger above to watch just that one.</p>`
       }
       <div class="alert-panel__row${ownerKey() ? " has-always" : ""}" role="group" aria-label="For how long">${(ownerKey() ? [...ALERT_MINUTES, [0, "Always"] as [number, string]] : ALERT_MINUTES).map(
         ([m, label]) => `<button type="button" class="chip chip--small" data-act="alert-min" data-v="${m}" aria-pressed="${ui.minutes === m}">${label}</button>`,
@@ -723,13 +720,36 @@ function alertsHtml(st: StationVM): string {
     </section>`;
 }
 
+interface AlertScope {
+  v: string;
+  label: string;
+  what: string;
+  ids: string[];
+}
+
+/** What an alert can watch here: all chargers, each charger type (kW + AC/DC), or the tapped charger. */
+function alertScopes(st: StationVM): AlertScope[] {
+  const conns = groupPlugs(st).flatMap((g) => g.connectors.map((c) => ({ ...c, kw: g.kw, current: g.current })));
+  const out: AlertScope[] = [{ v: "all", label: `All ${conns.length} here`, what: "any charger", ids: conns.map((c) => c.id) }];
+  const types = new Map<string, typeof conns>();
+  for (const c of conns) types.set(`${c.kw}|${c.current}`, [...(types.get(`${c.kw}|${c.current}`) ?? []), c]);
+  if (types.size > 1) {
+    for (const [key, cs] of [...types].sort((a, b) => (b[1][0].kw ?? 0) - (a[1][0].kw ?? 0))) {
+      const kind = `${formatKw(cs[0].kw)}${cs[0].current ? ` ${cs[0].current}` : ""}`;
+      out.push({ v: `t:${key}`, label: `${kind} · ${cs.length}`, what: `any ${kind} charger`, ids: cs.map((c) => c.id) });
+    }
+  }
+  const picked = state.histPick.cid ? conns.find((c) => c.id === state.histPick.cid) : null;
+  if (picked) out.push({ v: "one", label: labelOf(st, picked.id), what: labelOf(st, picked.id), ids: [picked.id] });
+  return out;
+}
+
 async function createAlert(st: StationVM): Promise<void> {
   const ui = state.alertUi;
-  const conns = groupPlugs(st).flatMap((g) => g.connectors);
-  const picked = ui.one && state.histPick.cid ? conns.find((c) => c.id === state.histPick.cid) : null;
-  const chosen = picked ? [picked] : conns;
+  const scopes = alertScopes(st);
+  const scope = scopes.find((s) => s.v === ui.scope) ?? scopes[0];
   const labels: Record<string, string> = {};
-  for (const c of chosen) labels[c.id] = labelOf(st, c.id);
+  for (const id of scope.ids) labels[id] = labelOf(st, id);
   ui.busy = true;
   ui.error = "";
   refreshDetail(st.id);
@@ -737,9 +757,9 @@ async function createAlert(st: StationVM): Promise<void> {
     const w = await startWatch({
       station: st.id,
       name: st.name,
-      connectors: chosen.map((c) => c.id),
+      connectors: scope.ids,
       labels,
-      what: picked ? labelOf(st, picked.id) : "any charger",
+      what: scope.what,
       event: ui.event,
       minutes: ui.minutes,
       once: ui.once,
@@ -748,7 +768,7 @@ async function createAlert(st: StationVM): Promise<void> {
     state.alertUi = { ...ui, open: false, busy: false, error: "" };
     closeLayer("alert");
     refreshDetail(st.id);
-    toast(`Alert on: ${watchText(w).toLowerCase()} at ${st.name}, ${ui.minutes === 0 ? "until you stop it" : `for ${ALERT_MINUTES.find(([m]) => m === ui.minutes)?.[1] ?? `${ui.minutes} min`}`}.`);
+    toast(`Alert on: ${((t) => (t.startsWith("Any ") ? `a${t.slice(1)}` : t))(watchText(w))} at ${st.name}, ${ui.minutes === 0 ? "until you stop it" : `for ${ALERT_MINUTES.find(([m]) => m === ui.minutes)?.[1] ?? `${ui.minutes} min`}`}.`);
     haptic(12);
   } catch (err) {
     ui.busy = false;
@@ -926,7 +946,7 @@ detailView.addEventListener("click", (e) => {
       refreshDetail(st.id);
       break;
     case "alert":
-      state.alertUi = { ...state.alertUi, open: !state.alertUi.open, error: "", one: !!state.histPick.cid };
+      state.alertUi = { ...state.alertUi, open: !state.alertUi.open, error: "", scope: state.histPick.cid ? "one" : "all" };
       if (state.alertUi.open) {
         openLayer("alert", () => {
           state.alertUi = { ...state.alertUi, open: false, error: "" };
@@ -941,7 +961,7 @@ detailView.addEventListener("click", (e) => {
       refreshDetail(st.id);
       break;
     case "alert-scope":
-      state.alertUi.one = btn.dataset.v === "one";
+      state.alertUi.scope = btn.dataset.v ?? "all";
       refreshDetail(st.id);
       break;
     case "alert-min":

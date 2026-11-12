@@ -700,6 +700,24 @@ test.describe("charger alerts", () => {
     expect(Object.keys(posts[0].labels as object)).toEqual(posts[0].connectors);
   });
 
+  test("watch one charger type (e.g. DC fast only)", async ({ page, context, api: _ }, info) => {
+    test.skip(info.project.name === "iphone", "iPhone Safari needs the app installed");
+    await context.grantPermissions(["notifications"]);
+    const { posts } = await mockAlerts(page);
+    await page.goto(`/#s=${encodeURIComponent(clarke.id)}`);
+    await page.getByRole("button", { name: "Charger alerts" }).click();
+    const panel = page.locator(".alert-panel");
+    const dcIds = clarke.points.flatMap((p) => p.plugs.filter((pl) => pl.current === "DC").flatMap((pl) => pl.connectors.map((c) => c.id)));
+    const dc = panel.getByRole("radio", { name: new RegExp(`^\\d+ kW DC · ${dcIds.length}$`) });
+    await expect(panel.getByRole("radio", { name: /^All \d+ here$/ })).toHaveAttribute("aria-checked", "true");
+    await dc.click();
+    await expect(dc).toHaveAttribute("aria-checked", "true");
+    await panel.getByRole("button", { name: "Start alert" }).click();
+    await expect(page.locator("#toast")).toContainText(/Alert on: any \d+ kW DC charger frees up/);
+    expect([...(posts[0].connectors as string[])].sort()).toEqual([...dcIds].sort());
+    await expect(page.locator(".watching")).toContainText(/Any \d+ kW DC charger frees up/);
+  });
+
   test("owner key: saved in Settings, unlocks 'Always', sent with the alert", async ({ page, context, api: _ }, info) => {
     test.skip(info.project.name === "iphone", "iPhone Safari needs the app installed");
     await context.grantPermissions(["notifications"]);

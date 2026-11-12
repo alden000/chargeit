@@ -2820,3 +2820,7 @@ button.cell {
 .card__fav {
   color: var(--ember);
 }
+
+.segmented--wrap {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
