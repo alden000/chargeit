@@ -698,6 +698,8 @@ test.describe("charger alerts", () => {
     expect(posts[0].connectors).toHaveLength(1);
     expect(posts[0]).toMatchObject({ event: 1, minutes: 60, once: false });
     expect(Object.keys(posts[0].labels as object)).toEqual(posts[0].connectors);
+    // Labels carry the charger's power for the notification text, e.g. "22 kW L4 49".
+    expect(Object.values(posts[0].labels as Record<string, string>)[0]).toMatch(/^\d+(\.\d+)? kW \S/);
   });
 
   test("watch one charger type (e.g. DC fast only)", async ({ page, context, api: _ }, info) => {

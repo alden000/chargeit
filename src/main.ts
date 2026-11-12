@@ -749,7 +749,12 @@ async function createAlert(st: StationVM): Promise<void> {
   const scopes = alertScopes(st);
   const scope = scopes.find((s) => s.v === ui.scope) ?? scopes[0];
   const labels: Record<string, string> = {};
-  for (const id of scope.ids) labels[id] = labelOf(st, id);
+  // Notifications name the charger with its power, e.g. "7.4 kW B2 559 is free now."
+  const kwOf = new Map(groupPlugs(st).flatMap((g) => g.connectors.map((c) => [c.id, g.kw] as const)));
+  for (const id of scope.ids) {
+    const kw = kwOf.get(id);
+    labels[id] = `${kw != null ? `${formatKw(kw)} ` : ""}${labelOf(st, id)}`;
+  }
   ui.busy = true;
   ui.error = "";
   refreshDetail(st.id);

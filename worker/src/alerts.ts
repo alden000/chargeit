@@ -58,7 +58,7 @@ export function parseWatch(body: unknown, opts: { owner?: boolean } = {}): Watch
   const rawLabels = o.labels && typeof o.labels === "object" ? (o.labels as Record<string, unknown>) : {};
   for (const c of connectors) {
     const l = str(rawLabels[c], 200);
-    if (l) labels[c] = l.trim().slice(0, 24);
+    if (l) labels[c] = l.trim().slice(0, 40);
   }
   if (o.event !== 0 && o.event !== 1 && o.event !== 2) return "invalid event";
   const minutes = typeof o.minutes === "number" && Number.isFinite(o.minutes) ? Math.round(o.minutes) : NaN;
