@@ -14,7 +14,7 @@ self.addEventListener("push", (event) => {
       tag: typeof data.tag === "string" ? data.tag : undefined,
       renotify: true,
       icon: "icons/icon-192.png",
-      badge: "icons/icon-192.png",
+      badge: "icons/badge-96.png", // monochrome: Android uses only its shape in the status bar
       vibrate: [120, 60, 120],
       data: { url: typeof data.url === "string" ? data.url : "./" },
     }),

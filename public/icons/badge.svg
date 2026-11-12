@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Android status-bar badge: only the alpha channel is used, so a white pin with the bolt cut out. -->
+  <defs>
+    <mask id="cut">
+      <rect width="512" height="512" fill="#fff"/>
+      <path d="M284 112 190 246h62l-22 108 98-142h-62l18-100z" fill="#000"/>
+    </mask>
+  </defs>
+  <path mask="url(#cut)" fill="#fff" d="M256 470c-20-29-176-170-176-250a176 176 0 0 1 352 0c0 80-156 221-176 250z"/>
+</svg>
